@@ -1,0 +1,21 @@
+"use client";
+import { FormEvent, useEffect, useMemo, useState } from "react";
+
+const api = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const wsBase = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000";
+type BoardEntry = { rank:number; id:string; username:string; score:number };
+type State = { status:string; players:{id:string;username:string;score:number}[]; current_question_index:number; question_count:number; answered:number; settings:{game_name:string}; question?:{id:string;title:string;option_a:string;option_b:string} };
+
+export default function RoomPage({ params }: { params: Promise<{roomId:string}> }) {
+  const [roomId, setRoomId] = useState(""); const [state, setState] = useState<State | null>(null); const [username, setUsername] = useState(""); const [playerId, setPlayerId] = useState(""); const [sessionId, setSessionId] = useState(""); const [ws, setWs] = useState<WebSocket | null>(null); const [message, setMessage] = useState(""); const [result, setResult] = useState<{counts:{A:number;B:number};leaderboard:BoardEntry[]} | null>(null);
+  useEffect(() => { params.then(p => setRoomId(p.roomId.toUpperCase())); }, [params]);
+  useEffect(() => { if (!roomId) return; const saved=localStorage.getItem(`party-quiz:${roomId}`); if(saved) { const s=JSON.parse(saved); setPlayerId(s.player_id); setSessionId(s.session_id); setUsername(s.username); }
+    fetch(`${api}/api/rooms/${roomId}`).then(r=>r.json()).then(setState).catch(()=>setMessage("房间不存在或服务未启动"));
+    const socket=new WebSocket(`${wsBase}/ws/rooms/${roomId}`); socket.onmessage=e=>{ const event=JSON.parse(e.data); if(event.type==="game_state") {setState(event.payload);setResult(null);} if(event.type==="answer_count") setState(s=>s?{...s,answered:event.payload.answered}:s); if(event.type==="result") setResult(event.payload); if(event.type==="error") setMessage(event.payload.message); }; setWs(socket); return ()=>socket.close(); },[roomId]);
+  async function join(e:FormEvent) { e.preventDefault(); const r=await fetch(`${api}/api/rooms/${roomId}/join`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username,session_id:sessionId||undefined})}); const data=await r.json(); if(!r.ok){setMessage(data.detail||"无法加入");return;} setPlayerId(data.player_id);setSessionId(data.session_id);setState(data.room);localStorage.setItem(`party-quiz:${roomId}`,JSON.stringify({player_id:data.player_id,session_id:data.session_id,username})); }
+  function answer(choice:"A"|"B") { if(!state?.question||!ws) return; ws.send(JSON.stringify({type:"answer",player_id:playerId,payload:{question_id:state.question.id,choice}})); }
+  const board=useMemo(()=>result?.leaderboard ?? [...(state?.players||[])].sort((a,b)=>b.score-a.score).map((p,i)=>({rank:i+1,...p})),[result,state]);
+  if (!state) return <main><p>正在连接房间…</p><p className="error">{message}</p></main>;
+  if (!playerId) return <main><h1>{state.settings.game_name}</h1><div className="card"><h2>房间 {roomId}</h2><form onSubmit={join}><label>输入你的名字<input value={username} onChange={e=>setUsername(e.target.value)} required maxLength={30}/></label><br/><br/><button>加入游戏</button></form><p className="error">{message}</p></div></main>;
+  return <main><div className="row"><h1>{state.settings.game_name}</h1><span className="muted">房间 {roomId}</span></div>{state.status==="WAITING"&&<div className="card"><h2>等待主持人开始</h2><p>已加入 {state.players.length} 位玩家</p></div>}{state.status==="QUESTION"&&state.question&&<div className="card"><p className="muted">第 {state.current_question_index+1} / {state.question_count} 题 · 已回答 {state.answered}/{state.players.length}</p><h2>{state.question.title}</h2><div className="choices"><button className="choice a" onClick={()=>answer("A")}>A<br/>{state.question.option_a}</button><button className="choice b" onClick={()=>answer("B")}>B<br/>{state.question.option_b}</button></div></div>}{result&&<div className="card"><h2>本题结果</h2><p>A：{result.counts.A}　B：{result.counts.B}</p><p className="muted">等待主持人进入下一题</p></div>}{state.status==="FINISHED"&&<div className="card"><h2>最终结果 🎉</h2></div>}<div className="card"><h2>排行榜</h2><ol className="leaderboard">{board.map(p=><li key={p.id}><span>{p.rank}. {p.username}</span><strong>{p.score}</strong></li>)}</ol></div><p className="error">{message}</p></main>;
+}

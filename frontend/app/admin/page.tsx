@@ -1,0 +1,10 @@
+"use client";
+import { FormEvent, useState } from "react";
+import { QRCodeSVG } from "qrcode.react";
+const api=process.env.NEXT_PUBLIC_API_URL||"http://localhost:8000";
+export default function Admin() { const [password,setPassword]=useState("");const [token,setToken]=useState("");const [room,setRoom]=useState<{room_id:string;status:string;players:unknown[]}|null>(null);const [message,setMessage]=useState(""); const headers={"Content-Type":"application/json",Authorization:`Bearer ${token}`};
+ async function login(e:FormEvent){e.preventDefault();const r=await fetch(`${api}/api/admin/login`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password})});const d=await r.json();if(!r.ok){setMessage("登录失败");return;}setToken(d.token);}
+ async function create(){const r=await fetch(`${api}/api/admin/rooms`,{method:"POST",headers});const d=await r.json();if(!r.ok){setMessage(d.detail||"创建失败");return;}setRoom(d);}
+ async function action(name:string){if(!room)return;const r=await fetch(`${api}/api/admin/rooms/${room.room_id}/${name}`,{method:"POST",headers});const d=await r.json();if(!r.ok){setMessage(d.detail||"操作失败");return;}setRoom(d);}
+ if(!token)return <main><h1>管理控制台</h1><div className="card"><form onSubmit={login}><label>管理员密码<input type="password" value={password} onChange={e=>setPassword(e.target.value)} required/></label><br/><br/><button>登录</button></form><p className="error">{message}</p></div></main>;
+ const url=room&&`${window.location.origin}/room/${room.room_id}`;return <main><h1>Party Quiz 管理</h1><div className="card">{!room?<button onClick={create}>创建房间</button>:<><h2>房间 {room.room_id}</h2>{url&&<><QRCodeSVG value={url} size={220}/><p><a href={url}>{url}</a></p></>}<p>状态：{room.status} · 玩家：{room.players.length}</p><div className="row"><button onClick={()=>action("start")}>开始</button><button onClick={()=>action("lock")}>锁定并计分</button><button onClick={()=>action("next")}>下一题</button></div></>}</div><p className="error">{message}</p></main>; }

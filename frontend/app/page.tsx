@@ -1,0 +1,1 @@
+export default function Home() { return <main><h1>Party Quiz</h1><p className="muted">实时聚会二选一答题游戏</p><div className="card"><p>玩家请扫描主持人展示的二维码，或直接访问房间链接。</p><p><a href="/admin">进入管理员控制台 →</a></p></div></main>; }
