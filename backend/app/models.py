@@ -16,6 +16,7 @@ class GameStatus(StrEnum):
     WAITING = "WAITING"
     COUNTDOWN = "COUNTDOWN"
     QUESTION = "QUESTION"
+    PAUSED = "PAUSED"
     LOCK = "LOCK"
     SHOW_RESULT = "SHOW_RESULT"
     FINISHED = "FINISHED"
@@ -37,6 +38,7 @@ class Player(BaseModel):
     username: str
     score: int = 0
     connected: bool = True
+    ready: bool = False
     answer_time_ms: int = 0
 
 
@@ -50,6 +52,22 @@ class Answer(BaseModel):
 class JoinRequest(BaseModel):
     username: str = Field(min_length=1, max_length=30)
     session_id: str | None = None
+    player_id: str | None = None
+
+
+class IdentityRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=30)
+    player_id: str | None = None
+
+
+class UserProfile(BaseModel):
+    id: str
+    username: str
+    avatar_filename: str
+
+
+class UserProfileUpdate(BaseModel):
+    username: str = Field(min_length=1, max_length=30)
 
 
 class AnswerPayload(BaseModel):
@@ -70,4 +88,9 @@ class GameSettings(BaseModel):
     question_duration: int = Field(default=20, ge=5, le=120)
     result_duration: int = Field(default=5, ge=1, le=60)
     countdown_duration: int = Field(default=3, ge=0, le=10)
-    max_players: int = Field(default=10, ge=2, le=100)
+    max_players: int = Field(default=12, ge=2, le=100)
+
+
+class RoomUpdate(BaseModel):
+    game_name: str | None = Field(default=None, min_length=1, max_length=80)
+    max_players: int | None = Field(default=None, ge=2, le=100)

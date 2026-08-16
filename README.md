@@ -1,5 +1,7 @@
 # Party Quiz Game
 
+Local development now starts Firestore and Cloud Storage emulators together with the application. See [local storage setup](docs/local-firestore.md) for the data model, reset command, and Cloud Run environment settings.
+
 基于 Next.js、FastAPI 和 WebSocket 的实时聚会二选一答题 MVP。房间游戏状态保存在后端进程内存，题库当前以内置种子数据启动；这是专为单实例 Cloud Run 设计的取舍。
 
 ## 本地启动
