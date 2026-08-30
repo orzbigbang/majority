@@ -4,6 +4,7 @@ import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { PlayerName } from "../PlayerName";
+import { QuestionText } from "../QuestionText";
 
 const api = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const identityKey = "party-quiz-player";
@@ -123,7 +124,7 @@ export default function ProfilePage() {
         {profile.history.length === 0 ? <div className="empty"><span className="empty-mark" aria-hidden="true">?</span><div><h3>最初の戦績はこれから</h3><p className="muted">ゲームを最後まで遊ぶと、結果がここに残ります。</p></div></div> : <div className="game-history">{profile.history.map((game, gameIndex) => <details key={game.id} open={gameIndex === 0}>
           <summary><span className={`history-rank rank-${Math.min(game.rank, 4)}`}><strong>{game.rank}</strong>位</span><span className="history-game"><strong>{game.game_name}</strong><small>{formatDate(game.finished_at)} · ルーム {game.room_id}</small></span><span className="history-score">{game.score}<small>pt</small></span></summary>
           <div className="choice-trail">{game.answers.map((answer, index) => <article key={`${answer.question_id}-${index}`} className={`past-choice past-choice-${answer.choice || "none"}`}>
-            <div className="choice-index">Q{index + 1}</div><div className="choice-history-copy"><strong>{answer.question}</strong><span>{answer.choice ? `${answer.choice} · ${answer.choice === "A" ? answer.option_a : answer.option_b}` : "未回答"}</span></div><div className="choice-history-result"><strong>{answer.score > 0 ? `+${answer.score}` : answer.score}</strong><small>A {answer.a_count} : {answer.b_count} B</small></div>
+            <div className="choice-index">Q{index + 1}</div><div className="choice-history-copy"><strong><QuestionText title={answer.question} /></strong><span>{answer.choice ? (answer.choice === "A" ? "押す" : "押さない") : "未回答"}</span></div><div className="choice-history-result"><strong>{answer.score > 0 ? `+${answer.score}` : answer.score}</strong><small>押す {answer.a_count} : {answer.b_count} 押さない</small></div>
           </article>)}</div>
         </details>)}</div>}
       </section>

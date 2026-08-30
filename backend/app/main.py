@@ -19,7 +19,7 @@ from pydantic import ValidationError
 
 from .game import GameManager
 from .avatar_storage import AvatarStorage
-from .models import AnswerPayload, EmojiReactionPayload, GameHistoryAnswer, GameHistoryRecord, GameSettings, GameStatus, IdentityRequest, JoinRequest, LoginRequest, PlayerProfileUpdate, Question, RoomCreateRequest, RoomSettingsUpdate, RoomUpdate, UserProfile, UserProfileUpdate, now
+from .models import AnswerPayload, EmojiReactionPayload, GameHistoryAnswer, GameHistoryRecord, GameSettings, GameStatus, IdentityRequest, JoinRequest, LoginRequest, PlayerProfileUpdate, Question, QuestionSelectionPayload, RoomCreateRequest, RoomSettingsUpdate, RoomUpdate, UserProfile, UserProfileUpdate, now
 from .repository import FirestoreGameRepository
 from .repository.base import GameRepository
 
@@ -228,7 +228,13 @@ async def lifespan(_: FastAPI):
             for room in due_rooms:
                 try:
                     if room.status == GameStatus.COUNTDOWN:
-                        changed = await manager.begin_question(room)
+                        changed = await manager.begin_selection(room)
+                        await broadcast(changed.id, "game_state", changed.snapshot())
+                    elif room.status in {GameStatus.SELECTING, GameStatus.PARENT_ANSWERING} and room.parent_disconnected_at and (current_parent := room.players.get(room.current_parent_id or "")) and not current_parent.connected:
+                        changed = await manager.defer_disconnected_parent(room)
+                        await broadcast(changed.id, "game_state", changed.snapshot())
+                    elif room.status == GameStatus.SELECTING:
+                        changed = await manager.auto_choose_question(room)
                         await broadcast(changed.id, "game_state", changed.snapshot())
                     elif room.status == GameStatus.QUESTION:
                         result = await manager.lock_and_score(room)
@@ -281,6 +287,8 @@ def questions(_: None = Depends(admin)) -> list[Question]: return manager.questi
 
 @app.post("/api/admin/questions")
 def create_question(question: Question, _: None = Depends(admin)) -> Question:
+    if "しかし" not in question.title:
+        raise HTTPException(422, "QUESTION_REQUIRES_SHIKASHI")
     question.order = len(manager.questions) + 1; manager.questions.append(question)
     if repository: repository.save_questions(manager.questions)
     return question
@@ -288,6 +296,8 @@ def create_question(question: Question, _: None = Depends(admin)) -> Question:
 
 @app.put("/api/admin/questions/{question_id}")
 def update_question(question_id: str, value: Question, _: None = Depends(admin)) -> Question:
+    if "しかし" not in value.title:
+        raise HTTPException(422, "QUESTION_REQUIRES_SHIKASHI")
     for i, q in enumerate(manager.questions):
         if q.id == question_id:
             manager.questions[i] = value
@@ -425,7 +435,8 @@ def room_options() -> dict:
         "available_question_count": available_question_count,
         "defaults": {
             "max_players": manager.settings.max_players,
-            "question_count": min(3, available_question_count),
+            "round_count": 1,
+            "selection_duration": min(60, max(5, round(manager.settings.selection_duration / 5) * 5)),
             "question_duration": min(60, max(10, round(manager.settings.question_duration / 10) * 10)),
             "between_question_duration": min(30, max(5, round(manager.settings.result_duration / 5) * 5)),
         },
@@ -436,10 +447,11 @@ def room_options() -> dict:
 async def create_public_room(request: RoomCreateRequest) -> dict:
     settings = manager.settings.model_copy(update={
         "max_players": request.max_players,
+        "selection_duration": request.selection_duration,
         "question_duration": request.question_duration,
         "result_duration": request.between_question_duration,
     })
-    room = await asyncio.to_thread(manager.create_room, settings, request.question_count)
+    room = await asyncio.to_thread(manager.create_room, settings, request.round_count)
     try:
         profile = await asyncio.to_thread(ensure_user_profile, request.player_id or str(uuid4()), request.username)
         player = await manager.join(room.id, profile.username, request.session_id, profile.id)
@@ -608,12 +620,23 @@ async def websocket(ws: WebSocket, room_id: str) -> None:
             if message.get("type") in {"answer", "select_answer"}:
                 try:
                     payload = AnswerPayload.model_validate(message.get("payload"))
+                    parent_was_answering = room.status == GameStatus.PARENT_ANSWERING
                     changed = await (manager.answer(room.id, connected_player_id, payload.question_id, payload.choice) if message.get("type") == "answer" else manager.select_answer(room.id, connected_player_id, payload.question_id, payload.choice))
                     if message.get("type") == "answer":
                         await send_message(ws, "answer_saved", {"choice": payload.choice})
-                    await broadcast(room.id, "answer_count", {"answered": len(changed.draft_answers), "total": len(changed.players)})
+                    if parent_was_answering and message.get("type") == "answer":
+                        await broadcast(room.id, "game_state", changed.snapshot())
+                    else:
+                        await broadcast(room.id, "answer_count", {"answered": len(changed.draft_answers), "total": len(changed.players)})
                 except HTTPException as exc: await send_message(ws, "error", {"code": str(exc.detail), "message": str(exc.detail)})
                 except ValidationError: await send_message(ws, "error", {"code": "INVALID_ANSWER", "message": "INVALID_ANSWER"})
+            if message.get("type") == "select_question":
+                try:
+                    payload = QuestionSelectionPayload.model_validate(message.get("payload"))
+                    changed = await manager.choose_question(room.id, connected_player_id, payload.question_id)
+                    await broadcast(room.id, "game_state", changed.snapshot())
+                except HTTPException as exc: await send_message(ws, "error", {"code": str(exc.detail), "message": str(exc.detail)})
+                except ValidationError: await send_message(ws, "error", {"code": "QUESTION_NOT_FOUND", "message": "QUESTION_NOT_FOUND"})
             if message.get("type") == "emoji_reaction":
                 try:
                     payload = EmojiReactionPayload.model_validate(message.get("payload"))
@@ -668,7 +691,8 @@ async def websocket(ws: WebSocket, room_id: str) -> None:
                         room.id,
                         connected_player_id,
                         settings.max_players,
-                        settings.question_count,
+                        settings.round_count,
+                        settings.selection_duration,
                         settings.question_duration,
                         settings.between_question_duration,
                     )

@@ -26,12 +26,17 @@ def test_player_can_update_profile_and_review_finished_game() -> None:
             await manager.join(room.id, "Bob", None, "bob")
             await manager.mark_ready(room.id, "bob")
             await manager.start(room.id, "alice")
-            question = room.current_question
-            assert question
-            await manager.answer(room.id, "alice", question.id, "B")
-            await manager.answer(room.id, "bob", question.id, "A")
-            await manager.lock_and_score(room)
-            await manager.next(room.id)
+            while room.status != "FINISHED":
+                question_id = room.selection_question_ids[0]
+                parent_id = room.current_parent_id
+                await manager.choose_question(room.id, parent_id, question_id)
+                parent_choice = "B" if parent_id == "alice" else "B"
+                await manager.answer(room.id, parent_id, question_id, parent_choice)
+                other_id = "bob" if parent_id == "alice" else "alice"
+                other_choice = "A" if parent_id == "alice" else "B"
+                await manager.answer(room.id, other_id, question_id, other_choice)
+                await manager.lock_and_score(room)
+                await manager.next(room.id)
             save_finished_game(room)
             save_finished_game(room)
 

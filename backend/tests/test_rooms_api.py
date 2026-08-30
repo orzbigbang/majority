@@ -12,7 +12,8 @@ def test_any_player_can_create_a_room_without_admin_authentication() -> None:
                 "username": "Owner",
                 "player_id": "owner-id",
                 "max_players": 6,
-                "question_count": 1,
+                "round_count": 1,
+                "selection_duration": 25,
                 "question_duration": 30,
                 "between_question_duration": 10,
             })
@@ -26,8 +27,10 @@ def test_any_player_can_create_a_room_without_admin_authentication() -> None:
             assert room["players"][0]["id"] == "owner-id"
             assert room["players"][0]["username"] == "Owner"
             assert room["settings"]["max_players"] == 6
+            assert room["settings"]["selection_duration"] == 25
             assert room["settings"]["question_duration"] == 30
             assert room["settings"]["result_duration"] == 10
+            assert room["round_count"] == 1
             assert room["question_count"] == 1
             assert room["room_id"] in {item["room_id"] for item in client.get("/api/rooms").json()}
     finally:

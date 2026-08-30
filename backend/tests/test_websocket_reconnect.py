@@ -18,6 +18,7 @@ def test_websocket_disconnect_during_game_preserves_player_for_reconnect() -> No
         player = await manager.join(room.id, "Player", None, "player")
         await manager.mark_ready(room.id, player.id)
         await manager.start(room.id, owner.id)
+        await manager.choose_question(room.id, owner.id, room.selection_question_ids[0])
         return room, owner
 
     room, owner = asyncio.run(prepare_room())
@@ -28,7 +29,7 @@ def test_websocket_disconnect_during_game_preserves_player_for_reconnect() -> No
             with client.websocket_connect(websocket_url) as socket:
                 connected_state = socket.receive_json()
                 assert connected_state["type"] == "game_state"
-                assert connected_state["payload"]["status"] == "QUESTION"
+                assert connected_state["payload"]["status"] == "PARENT_ANSWERING"
                 assert "clock" in connected_state["payload"]
                 assert "server_time" in connected_state["payload"]["clock"]
 

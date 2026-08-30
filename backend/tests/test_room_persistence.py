@@ -106,6 +106,7 @@ def test_running_room_is_restored_after_process_restart() -> None:
         await first.join(room.id, "Player", None, "player")
         await first.mark_ready(room.id, "player")
         await first.start(room.id, "owner")
+        await first.choose_question(room.id, "owner", "only")
         version_before_answer = repository.get_room(room.id).version
         await first.answer(room.id, "owner", "only", "A")
         assert repository.get_room(room.id).version == version_before_answer + 1
@@ -165,6 +166,7 @@ def test_room_save_does_not_block_the_async_event_loop() -> None:
         await manager.join(room.id, "Player", None, "player")
         await manager.mark_ready(room.id, "player")
         await manager.start(room.id, "owner")
+        await manager.choose_question(room.id, "owner", "only")
 
         repository.block_next_save = True
         answer_task = asyncio.create_task(manager.answer(room.id, "owner", "only", "A"))

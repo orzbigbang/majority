@@ -12,15 +12,16 @@ const identityKey = "party-quiz-player";
 const avatarStyleVersion = process.env.NEXT_PUBLIC_AVATAR_STYLE_VERSION || "cute-animal-v1";
 type Identity = { player_id: string; username: string; avatar_url?: string; session_id?: string };
 type LobbyRoom = { room_id: string; status: string; player_count: number; max_players: number; game_name: string };
-type RoomSetup = { max_players: number; question_count: number; question_duration: number; between_question_duration: number };
+type RoomSetup = { max_players: number; round_count: number; selection_duration: number; question_duration: number; between_question_duration: number };
 type RoomSetupDraft = { [Key in keyof RoomSetup]: string };
 type IdentityEntryStep = "idle" | "creating-avatar" | "entering";
-const defaultRoomSetup: RoomSetup = { max_players: 12, question_count: 3, question_duration: 20, between_question_duration: 5 };
+const defaultRoomSetup: RoomSetup = { max_players: 12, round_count: 1, selection_duration: 15, question_duration: 20, between_question_duration: 5 };
 
 function setupDraft(values: RoomSetup): RoomSetupDraft {
   return {
     max_players: String(values.max_players),
-    question_count: String(values.question_count),
+    round_count: String(values.round_count),
+    selection_duration: String(values.selection_duration),
     question_duration: String(values.question_duration),
     between_question_duration: String(values.between_question_duration),
   };
@@ -92,7 +93,6 @@ export default function Home() {
   const [roomEntryStep, setRoomEntryStep] = useState<"idle" | "creating" | "entering">("idle");
   const creatingIdentity = identityEntryStep !== "idle";
   const creatingRoom = roomEntryStep !== "idle";
-  const questionMaximum = Math.min(30, availableQuestionCount);
   const { notice: roomExitNotice, clearNotice: clearRoomExitNotice } = useRoomExitNotice();
 
   function editSetup(field: keyof RoomSetupDraft, value: string) {
@@ -126,10 +126,10 @@ export default function Home() {
       if (!response.ok) return;
       const data = await response.json();
       setAvailableQuestionCount(data.available_question_count);
-      const questionMaximum = Math.min(30, data.available_question_count);
       setRoomSetup(setupDraft({
         max_players: Math.min(100, Math.max(2, data.defaults.max_players)),
-        question_count: Math.max(1, Math.min(questionMaximum, data.defaults.question_count)),
+        round_count: Math.max(1, Math.min(10, data.defaults.round_count)),
+        selection_duration: Number(normalizedNumber(String(data.defaults.selection_duration), 5, 60, 5, 15)),
         question_duration: Number(normalizedNumber(String(data.defaults.question_duration), 10, 60, 10, 20)),
         between_question_duration: Number(normalizedNumber(String(data.defaults.between_question_duration), 5, 30, 5, 5)),
       }));
@@ -212,7 +212,8 @@ export default function Home() {
           player_id: identity.player_id,
           session_id: identity.session_id,
           max_players: Number(roomSetup.max_players),
-          question_count: Number(roomSetup.question_count),
+          round_count: Number(roomSetup.round_count),
+          selection_duration: Number(roomSetup.selection_duration),
           question_duration: Number(roomSetup.question_duration),
           between_question_duration: Number(roomSetup.between_question_duration),
         }),
@@ -272,7 +273,7 @@ export default function Home() {
     <section className="card lobby-board" aria-labelledby="lobby-title">
       <div className="section-heading">
         <div><span className="step-label">参加受付中</span><h2 id="lobby-title">参加するルームを選ぶ</h2><p className="muted room-refresh-status" aria-live="polite">{roomsRefreshing ? "ルームを更新しています…" : roomsLoaded ? "最新のルームを表示中 · 5秒ごとに自動更新" : "参加できるルームを確認しています…"}</p></div>
-        <div className="button-row lobby-actions"><button type="button" className="create-room-button" disabled={creatingRoom || availableQuestionCount < 2} onClick={() => setRoomSetupOpen(true)}><span aria-hidden="true">＋</span>{creatingRoom ? "作成中…" : "ルームを作成"}</button><button type="button" className={`refresh-room-button secondary${roomsRefreshing ? " is-refreshing" : ""}`} disabled={creatingRoom || roomsRefreshing} onClick={() => void refreshRooms()}><span aria-hidden="true">↻</span> {roomsRefreshing ? "更新中" : "更新"}</button></div>
+        <div className="button-row lobby-actions"><button type="button" className="create-room-button" disabled={creatingRoom || availableQuestionCount < 1} onClick={() => setRoomSetupOpen(true)}><span aria-hidden="true">＋</span>{creatingRoom ? "作成中…" : "ルームを作成"}</button><button type="button" className={`refresh-room-button secondary${roomsRefreshing ? " is-refreshing" : ""}`} disabled={creatingRoom || roomsRefreshing} onClick={() => void refreshRooms()}><span aria-hidden="true">↻</span> {roomsRefreshing ? "更新中" : "更新"}</button></div>
       </div>
       {rooms.length === 0 ? <div className="empty"><span className="empty-mark" aria-hidden="true">＋</span><div><h3>参加できるルームはまだありません</h3><p className="muted">新しいルームを作って、みんなを招待しましょう。</p></div></div> : <div className="room-list">{rooms.map(room => {
         const joinable = room.status === "WAITING" && room.player_count < room.max_players;
@@ -290,7 +291,8 @@ export default function Home() {
       <form onSubmit={createRoom}>
         <div className="room-setup-grid">
           <SetupNumberInput label="ルームの定員" hint="範囲：2〜100人（オーナーを含む）" value={roomSetup.max_players} minimum={2} maximum={100} step={1} onChange={value => editSetup("max_players", value)} onBlur={() => normalizeSetup("max_players", 2, 100, 1, defaultRoomSetup.max_players)} />
-          <SetupNumberInput label="出題数" hint={`範囲：1〜${questionMaximum}問（最大30問）`} value={roomSetup.question_count} minimum={1} maximum={questionMaximum} step={1} onChange={value => editSetup("question_count", value)} onBlur={() => normalizeSetup("question_count", 1, questionMaximum, 1, Math.min(defaultRoomSetup.question_count, questionMaximum))} />
+          <SetupNumberInput label="ラウンド数" hint="1ラウンドで全員が1回ずつ親になります（1〜10ラウンド）" value={roomSetup.round_count} minimum={1} maximum={10} step={1} onChange={value => editSetup("round_count", value)} onBlur={() => normalizeSetup("round_count", 1, 10, 1, defaultRoomSetup.round_count)} />
+          <SetupNumberInput label="問題を選ぶ時間" hint="範囲：5〜60秒（5秒刻み、時間切れで自動選択）" value={roomSetup.selection_duration} minimum={5} maximum={60} step={5} onChange={value => editSetup("selection_duration", value)} onBlur={() => normalizeSetup("selection_duration", 5, 60, 5, defaultRoomSetup.selection_duration)} />
           <SetupNumberInput label="回答時間" hint="範囲：10〜60秒（10秒刻み）" value={roomSetup.question_duration} minimum={10} maximum={60} step={10} onChange={value => editSetup("question_duration", value)} onBlur={() => normalizeSetup("question_duration", 10, 60, 10, defaultRoomSetup.question_duration)} />
           <SetupNumberInput label="問題間の待ち時間" hint="範囲：5〜30秒（5秒刻み）" value={roomSetup.between_question_duration} minimum={5} maximum={30} step={5} onChange={value => editSetup("between_question_duration", value)} onBlur={() => normalizeSetup("between_question_duration", 5, 30, 5, defaultRoomSetup.between_question_duration)} />
         </div>

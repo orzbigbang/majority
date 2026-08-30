@@ -1,6 +1,11 @@
 const apiMessages: Record<string, string> = {
   ADMIN_UNAUTHORIZED: "管理者として認証できませんでした。",
   QUESTION_NOT_FOUND: "質問が見つかりません。",
+  QUESTION_REQUIRES_SHIKASHI: "質問には転換語「しかし」を必ず入れてください。",
+  QUESTION_SELECTION_NOT_ACTIVE: "現在は問題を選ぶ時間ではありません。",
+  PARENT_ONLY: "今回の親だけが問題を選べます。",
+  PARENT_ANSWERS_FIRST: "親が回答を決めるまでお待ちください。",
+  PARENT_ANSWER_LOCKED: "親の回答はすでに確定しています。",
   USER_STORAGE_NOT_AVAILABLE: "ユーザーデータを利用できません。",
   USER_NOT_FOUND: "ユーザーが見つかりません。",
   AVATAR_NOT_AVAILABLE: "アバターを利用できません。",
@@ -41,6 +46,8 @@ const apiMessages: Record<string, string> = {
 const statusLabels: Record<string, string> = {
   WAITING: "待機中",
   COUNTDOWN: "開始前",
+  SELECTING: "親が問題を選択中",
+  PARENT_ANSWERING: "親が先に回答中",
   QUESTION: "回答中",
   PAUSED: "一時停止中",
   LOCK: "集計中",

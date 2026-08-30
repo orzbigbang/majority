@@ -6,7 +6,7 @@ from enum import StrEnum
 from typing import Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 
 def now() -> datetime:
@@ -16,6 +16,8 @@ def now() -> datetime:
 class GameStatus(StrEnum):
     WAITING = "WAITING"
     COUNTDOWN = "COUNTDOWN"
+    SELECTING = "SELECTING"
+    PARENT_ANSWERING = "PARENT_ANSWERING"
     QUESTION = "QUESTION"
     PAUSED = "PAUSED"
     LOCK = "LOCK"
@@ -119,6 +121,10 @@ class AnswerPayload(BaseModel):
     choice: Literal["A", "B"]
 
 
+class QuestionSelectionPayload(BaseModel):
+    question_id: str
+
+
 class EmojiReactionPayload(BaseModel):
     reaction_id: Literal["clap", "laugh", "wow", "like", "shy"]
     target_player_id: str = Field(min_length=1, max_length=100)
@@ -135,6 +141,7 @@ class AdminSession(BaseModel):
 
 class GameSettings(BaseModel):
     game_name: str = "マジョリティ"
+    selection_duration: int = Field(default=15, ge=5, le=60)
     question_duration: int = Field(default=20, ge=5, le=120)
     result_duration: int = Field(default=5, ge=1, le=60)
     countdown_duration: int = Field(default=3, ge=0, le=10)
@@ -143,14 +150,16 @@ class GameSettings(BaseModel):
 
 class RoomCreateRequest(JoinRequest):
     max_players: int = Field(default=12, ge=2, le=100)
-    question_count: int = Field(default=3, ge=1, le=30)
+    round_count: int = Field(default=1, ge=1, le=10, validation_alias=AliasChoices("round_count", "question_count"))
+    selection_duration: int = Field(default=15, ge=5, le=60, multiple_of=5)
     question_duration: int = Field(default=20, ge=10, le=60, multiple_of=10)
     between_question_duration: int = Field(default=5, ge=5, le=30, multiple_of=5)
 
 
 class RoomSettingsUpdate(BaseModel):
     max_players: int = Field(ge=2, le=100)
-    question_count: int = Field(ge=1, le=30)
+    round_count: int = Field(ge=1, le=10, validation_alias=AliasChoices("round_count", "question_count"))
+    selection_duration: int = Field(default=15, ge=5, le=60, multiple_of=5)
     question_duration: int = Field(ge=10, le=60, multiple_of=10)
     between_question_duration: int = Field(ge=5, le=30, multiple_of=5)
 
@@ -171,6 +180,14 @@ class RoomState(BaseModel):
     owner_id: str | None = None
     answers: list[Answer] = Field(default_factory=list)
     draft_answers: list[Answer] = Field(default_factory=list)
+    round_count: int = 1
+    parent_order: list[str] = Field(default_factory=list)
+    parent_turn_order: list[str] = Field(default_factory=list)
+    selected_question: Question | None = None
+    selection_question_ids: list[str] = Field(default_factory=list)
+    used_question_ids: list[str] = Field(default_factory=list)
+    selection_started_at: datetime | None = None
+    parent_disconnected_at: datetime | None = None
     current_question_index: int = 0
     question_started_at: datetime | None = None
     countdown_started_at: datetime | None = None

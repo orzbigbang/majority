@@ -25,7 +25,7 @@ with sync_playwright() as playwright:
     api = playwright.request.new_context(base_url="http://127.0.0.1:8011")
     created = api.post("/api/rooms", data={
         "username": "OwnerCheck", "player_id": "owner-check",
-        "max_players": 6, "question_count": 1,
+        "max_players": 6, "round_count": 1,
         "question_duration": 10, "between_question_duration": 10,
     })
     assert created.ok

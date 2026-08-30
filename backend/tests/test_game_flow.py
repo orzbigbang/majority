@@ -1,10 +1,11 @@
 import asyncio
+from datetime import timedelta
 
 from app.game import GameManager
 from app.models import GameSettings, GameStatus, Question
 
 
-def test_game_progresses_from_countdown_to_result_to_finished() -> None:
+def test_one_round_gives_every_player_one_parent_turn() -> None:
     async def run() -> None:
         manager = GameManager()
         manager.questions = [Question(id="only", title="A or B?", option_a="A", option_b="B")]
@@ -21,6 +22,7 @@ def test_game_progresses_from_countdown_to_result_to_finished() -> None:
         await manager.mark_ready(room.id, "bob")
         await manager.start(room.id, "alice")
         assert room.status == GameStatus.COUNTDOWN
+        assert all(player.score == 1 for player in room.players.values())
         assert room.clock_version == 1
         assert room.snapshot()["phase_duration"] == 3
         assert room.snapshot()["clock"]["server_time"].endswith("+00:00")
@@ -39,16 +41,44 @@ def test_game_progresses_from_countdown_to_result_to_finished() -> None:
         assert room.status == GameStatus.COUNTDOWN
         assert room.clock_version == 3
 
-        await manager.begin_question(room)
-        assert room.status == GameStatus.QUESTION
+        await manager.begin_selection(room)
+        assert room.status == GameStatus.SELECTING
         assert room.clock_version == 4
-        await manager.answer(room.id, "alice", "only", "A")
+        assert room.snapshot()["question_count"] == 2
+        assert room.snapshot()["current_parent_id"] == "alice"
+        try:
+            await manager.choose_question(room.id, "bob", "only")
+            assert False, "Only the current parent may choose a question"
+        except Exception as error:
+            assert getattr(error, "detail", None) == "PARENT_ONLY"
+        await manager.choose_question(room.id, "alice", "only")
+        assert room.status == GameStatus.PARENT_ANSWERING
+        assert room.clock_version == 5
+        assert room.snapshot()["question"]["id"] == "only"
+        try:
+            await manager.answer(room.id, "bob", "only", "A")
+            assert False, "Other players must wait for the parent to answer"
+        except Exception as error:
+            assert getattr(error, "detail", None) == "PARENT_ANSWERS_FIRST"
         await manager.select_answer(room.id, "alice", "only", "B")
+        await manager.answer(room.id, "alice", "only", "B")
+        assert room.status == GameStatus.QUESTION
+        assert room.clock_version == 6
+        try:
+            await manager.answer(room.id, "alice", "only", "A")
+            assert False, "The parent's answer must be locked before other players answer"
+        except Exception as error:
+            assert getattr(error, "detail", None) == "PARENT_ANSWER_LOCKED"
         await manager.answer(room.id, "bob", "only", "A")
         result = await manager.lock_and_score(room)
         assert room.status == GameStatus.SHOW_RESULT
-        assert room.clock_version == 5
+        assert room.clock_version == 7
         assert result["counts"] == {"A": 1, "B": 1}
+        assert result["parent_id"] == "alice"
+        assert result["majority_choice"] == "B"
+        assert result["scores"] == {"alice": 2, "bob": -1}
+        assert room.players["alice"].score == 3
+        assert room.players["bob"].score == 0
         assert result["question"] == {"id": "only", "title": "A or B?", "option_a": "A", "option_b": "B"}
         assert result["answers"] == [{"player_id": "alice", "username": "Alice", "choice": "B"}, {"player_id": "bob", "username": "Bob", "choice": "A"}]
         assert room.players["alice"].answer_time_ms >= 0
@@ -57,9 +87,20 @@ def test_game_progresses_from_countdown_to_result_to_finished() -> None:
         assert room.snapshot()["result"] == result
 
         await manager.next(room.id)
+        assert room.status == GameStatus.SELECTING
+        assert room.clock_version == 8
+        assert room.snapshot()["current_parent_id"] == "bob"
+        await manager.choose_question(room.id, "bob", "only")
+        await manager.answer(room.id, "bob", "only", "A")
+        await manager.answer(room.id, "alice", "only", "A")
+        second_result = await manager.lock_and_score(room)
+        assert second_result["parent_id"] == "bob"
+        assert second_result["majority_choice"] == "A"
+        await manager.next(room.id)
         assert room.status == GameStatus.FINISHED
-        assert room.clock_version == 6
+        assert room.clock_version == 12
         assert room.snapshot()["review"] == room.history
+        assert [turn["parent_id"] for turn in room.history] == ["alice", "bob"]
 
         await manager.reset(room.id)
         assert room.status == GameStatus.WAITING
@@ -83,6 +124,7 @@ def test_leaving_removes_the_player_and_their_current_answers() -> None:
         await manager.join(room.id, "Bob", None, "bob")
         await manager.mark_ready(room.id, "bob")
         await manager.start(room.id, "alice")
+        await manager.choose_question(room.id, "alice", "only")
         await manager.answer(room.id, "alice", "only", "A")
 
         await manager.leave(room.id, "alice")
@@ -106,6 +148,7 @@ def test_running_player_can_disconnect_and_rejoin_without_losing_game_state() ->
         await manager.join(room.id, "Bob", None, "bob")
         await manager.mark_ready(room.id, "bob")
         await manager.start(room.id, "alice")
+        await manager.choose_question(room.id, "alice", "only")
         await manager.answer(room.id, "alice", "only", "A")
 
         await manager.set_connected(room.id, "alice", False)
@@ -196,7 +239,8 @@ def test_only_owner_can_start_after_every_other_player_is_ready() -> None:
             assert getattr(error, "detail", None) == "OWNER_ONLY"
 
         await manager.start(room.id, "owner")
-        assert room.status == GameStatus.QUESTION
+        assert room.status == GameStatus.SELECTING
+        assert room.current_parent_id == "owner"
         await manager.end(room.id)
 
         await manager.reset(room.id, "player")
@@ -214,25 +258,27 @@ def test_only_owner_can_update_waiting_room_settings() -> None:
             Question(id="one", title="One?", option_a="A", option_b="B", order=1),
             Question(id="two", title="Two?", option_a="A", option_b="B", order=2),
         ]
-        room = manager.create_room(question_count=1)
+        room = manager.create_room(round_count=1)
         await manager.join(room.id, "Owner", None, "owner")
         await manager.join(room.id, "Player", None, "player")
 
         try:
-            await manager.update_room_settings(room.id, "player", 8, 2, 30, 10)
+            await manager.update_room_settings(room.id, "player", 8, 2, 15, 30, 10)
             assert False, "A non-owner must not update room settings"
         except Exception as error:
             assert getattr(error, "detail", None) == "OWNER_ONLY"
 
-        changed = await manager.update_room_settings(room.id, "owner", 8, 2, 30, 10)
+        changed = await manager.update_room_settings(room.id, "owner", 8, 2, 25, 30, 10)
         assert changed.settings.max_players == 8
+        assert changed.settings.selection_duration == 25
         assert changed.settings.question_duration == 30
         assert changed.settings.result_duration == 10
         assert [question.id for question in changed.questions] == ["one", "two"]
-        assert changed.snapshot()["question_count"] == 2
+        assert changed.round_count == 2
+        assert changed.snapshot()["question_count"] == 4
 
         try:
-            await manager.update_room_settings(room.id, "owner", 1, 2, 30, 10)
+            await manager.update_room_settings(room.id, "owner", 1, 2, 15, 30, 10)
             assert False, "The room capacity must cover its current players"
         except Exception as error:
             assert getattr(error, "detail", None) == "MAX_PLAYERS_BELOW_CURRENT_PLAYERS"
@@ -240,10 +286,96 @@ def test_only_owner_can_update_waiting_room_settings() -> None:
         await manager.mark_ready(room.id, "player")
         await manager.start(room.id, "owner")
         try:
-            await manager.update_room_settings(room.id, "owner", 8, 2, 30, 10)
+            await manager.update_room_settings(room.id, "owner", 8, 2, 15, 30, 10)
             assert False, "Running room settings must be immutable"
         except Exception as error:
             assert getattr(error, "detail", None) == "GAME_ALREADY_STARTED"
+
+    asyncio.run(run())
+
+
+def test_selection_offers_three_unused_questions_and_auto_selects_on_timeout() -> None:
+    async def run() -> None:
+        manager = GameManager()
+        manager.questions = [Question(id=f"q{index}", title=f"Question {index}", option_a="A", option_b="B", order=index) for index in range(1, 5)]
+        manager.settings = GameSettings(countdown_duration=0, selection_duration=15)
+        room = manager.create_room(round_count=3)
+        await manager.join(room.id, "Owner", None, "owner")
+        await manager.join(room.id, "Player", None, "player")
+        await manager.mark_ready(room.id, "player")
+        await manager.start(room.id, "owner")
+
+        first_options = room.snapshot()["question_options"]
+        assert len(first_options) == 3
+        assert room.snapshot()["clock"]["phase"] == GameStatus.SELECTING
+        assert room.snapshot()["clock"]["duration_ms"] == 15_000
+
+        first_question_id = first_options[0]["id"]
+        await manager.choose_question(room.id, "owner", first_question_id)
+        assert room.used_question_ids == [first_question_id]
+        room.status = GameStatus.SHOW_RESULT
+        await manager.next(room.id)
+        assert first_question_id not in {item["id"] for item in room.snapshot()["question_options"]}
+
+        timed_options = {item["id"] for item in room.snapshot()["question_options"]}
+        room.selection_started_at = now() - timedelta(seconds=16)
+        await manager.auto_choose_question(room)
+        assert room.status == GameStatus.PARENT_ANSWERING
+        assert room.selected_question is not None
+        assert room.selected_question.id in timed_options
+        assert room.selected_question.id != first_question_id
+
+        selected_ids = {first_question_id, room.selected_question.id}
+        for _ in range(2):
+            room.status = GameStatus.SHOW_RESULT
+            await manager.next(room.id)
+            next_options = {item["id"] for item in room.snapshot()["question_options"]}
+            assert next_options.isdisjoint(selected_ids)
+            next_question_id = next(iter(next_options))
+            await manager.choose_question(room.id, room.current_parent_id, next_question_id)
+            selected_ids.add(next_question_id)
+        assert selected_ids == {"q1", "q2", "q3", "q4"}
+
+        room.status = GameStatus.SHOW_RESULT
+        await manager.next(room.id)
+        assert len(room.snapshot()["question_options"]) == 3
+        assert room.used_question_ids == []
+
+    from app.models import now
+
+    asyncio.run(run())
+
+
+def test_disconnected_parent_turn_is_deferred_and_restored_after_reconnect() -> None:
+    async def run() -> None:
+        manager = GameManager()
+        manager.questions = [Question(id="only", title="A or B?", option_a="A", option_b="B")]
+        manager.settings = GameSettings(countdown_duration=0)
+        room = manager.create_room()
+        await manager.join(room.id, "Owner", None, "owner")
+        await manager.join(room.id, "Player 1", None, "player-1")
+        await manager.join(room.id, "Player 2", None, "player-2")
+        await manager.mark_ready(room.id, "player-1")
+        await manager.mark_ready(room.id, "player-2")
+        await manager.start(room.id, "owner")
+
+        await manager.set_connected(room.id, "owner", False)
+        room.parent_disconnected_at = now() - timedelta(seconds=9)
+        await manager.defer_disconnected_parent(room)
+        assert room.current_parent_id == "player-1"
+        assert room.parent_turn_order == ["player-1", "player-2", "owner"]
+
+        await manager.set_connected(room.id, "owner", True)
+        room.status = GameStatus.SHOW_RESULT
+        await manager.next(room.id)
+        assert room.current_parent_id == "player-2"
+        room.status = GameStatus.SHOW_RESULT
+        await manager.next(room.id)
+        assert room.current_parent_id == "owner"
+        assert room.status == GameStatus.SELECTING
+        assert room.selection_started_at is not None
+
+    from app.models import now
 
     asyncio.run(run())
 
