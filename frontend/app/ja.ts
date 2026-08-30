@@ -27,6 +27,7 @@ const apiMessages: Record<string, string> = {
   SELF_REACTION_NOT_ALLOWED: "自分にはリアクションを送れません。",
   REACTION_TARGET_UNAVAILABLE: "このプレイヤーには今リアクションを送れません。",
   REACTION_RATE_LIMITED: "リアクションは少し間をあけて送ってください。",
+  ROOM_REACTION_RATE_LIMITED: "リアクションが混み合っています。少し待ってから送ってください。",
   INVALID_REACTION: "このリアクションは送れません。",
   "Add at least one question first": "先に質問を1問以上登録してください。",
   "Only waiting rooms can be edited": "待機中のルームだけ編集できます。",

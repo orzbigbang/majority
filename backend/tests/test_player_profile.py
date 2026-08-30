@@ -2,7 +2,7 @@ import asyncio
 
 from fastapi.testclient import TestClient
 
-from app.main import admin_tokens, app, manager, save_finished_game, saved_game_runs, volatile_history, volatile_users
+from app.main import app, create_admin_token, manager, save_finished_game, saved_game_runs, volatile_history, volatile_users
 
 
 def test_player_can_update_profile_and_review_finished_game() -> None:
@@ -44,8 +44,8 @@ def test_player_can_update_profile_and_review_finished_game() -> None:
         assert len(payload["history"]) == 1
         assert payload["history"][0]["answers"][0]["choice"] == "B"
 
-        admin_tokens.add("test-admin-token")
-        users = client.get("/api/admin/users", headers={"Authorization": "Bearer test-admin-token"})
+        token = create_admin_token()
+        users = client.get("/api/admin/users", headers={"Authorization": f"Bearer {token}"})
         assert users.status_code == 200
         alice = next(user for user in users.json() if user["id"] == "alice")
         assert alice["stats"] == {"games": 1, "wins": 1, "best_rank": 1, "average_rank": 1.0}
@@ -54,7 +54,6 @@ def test_player_can_update_profile_and_review_finished_game() -> None:
         assert "answers" not in alice["recent_games"][0]
 
     manager.rooms.clear()
-    admin_tokens.discard("test-admin-token")
 
 
 def test_joining_a_room_restores_a_missing_persistent_profile() -> None:

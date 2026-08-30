@@ -129,4 +129,6 @@ Vercel Git 自动部署与分支规则参见 [Vercel Git 部署文档](https://v
 
 ## 数据与实例限制
 
-Firestore Repository 位于 `backend/app/repository/`，用于题库、设置、用户资料和游戏历史。`Room`、在线玩家、管理员登录令牌和答题过程不会写入 Firestore；API 重启会清空正在进行的房间，因此生产环境必须保持单实例，并接受发布或实例重启会中断当前游戏这一 MVP 限制。
+Firestore Repository 位于 `backend/app/repository/`，用于题库、设置、用户资料、游戏历史以及进行中的房间状态。房间虚拟时钟通过持久化的 `clock_version` 和统一截止时间恢复；API 实例重启后会从 Firestore 继续加载房间。
+
+当前实时广播架构采用单个权威 API 实例，因此 Cloud Run 部署命令必须保持 `--max 1`。不要在未增加跨实例事件总线的情况下提高实例上限，否则 WebSocket 表情等瞬时事件无法保证送达连接在另一实例上的客户端。房间状态和答题数据仍由 Firestore 持久化，不依赖 Redis。

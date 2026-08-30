@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Literal
@@ -34,12 +35,23 @@ class Question(BaseModel):
 
 class Player(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
-    session_id: str
+    session_id: str | None = None
+    session_hash: str | None = None
     username: str
     score: int = 0
     connected: bool = True
     ready: bool = False
     answer_time_ms: int = 0
+
+    @staticmethod
+    def hash_session(session_id: str) -> str:
+        return hashlib.sha256(session_id.encode("utf-8")).hexdigest()
+
+    def matches_session(self, session_id: str | None) -> bool:
+        if not session_id:
+            return False
+        expected = self.session_hash or (self.hash_session(self.session_id) if self.session_id else None)
+        return bool(expected and hashlib.sha256(session_id.encode("utf-8")).hexdigest() == expected)
 
 
 class Answer(BaseModel):
@@ -108,7 +120,6 @@ class AnswerPayload(BaseModel):
 
 
 class EmojiReactionPayload(BaseModel):
-    event_id: str = Field(min_length=1, max_length=64)
     reaction_id: Literal["clap", "laugh", "wow", "like", "shy"]
     target_player_id: str = Field(min_length=1, max_length=100)
     scope_id: str = Field(min_length=1, max_length=100)
@@ -147,3 +158,30 @@ class RoomSettingsUpdate(BaseModel):
 class RoomUpdate(BaseModel):
     game_name: str | None = Field(default=None, min_length=1, max_length=80)
     max_players: int | None = Field(default=None, ge=2, le=100)
+
+
+class RoomState(BaseModel):
+    """Serializable, persistent representation of a live game room."""
+
+    id: str
+    questions: list[Question]
+    settings: GameSettings
+    status: GameStatus = GameStatus.WAITING
+    players: list[Player] = Field(default_factory=list)
+    owner_id: str | None = None
+    answers: list[Answer] = Field(default_factory=list)
+    draft_answers: list[Answer] = Field(default_factory=list)
+    current_question_index: int = 0
+    question_started_at: datetime | None = None
+    countdown_started_at: datetime | None = None
+    result_started_at: datetime | None = None
+    last_result: dict | None = None
+    history: list[dict] = Field(default_factory=list)
+    previous_game: dict | None = None
+    game_run_id: str | None = None
+    paused_status: GameStatus | None = None
+    paused_remaining_seconds: float | None = None
+    clock_version: int = 0
+    version: int = 0
+    created_at: datetime = Field(default_factory=now)
+    updated_at: datetime = Field(default_factory=now)

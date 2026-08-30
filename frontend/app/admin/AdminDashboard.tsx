@@ -21,7 +21,8 @@ type SettingsDraft = Omit<Settings, "question_duration" | "result_duration" | "c
 };
 type Question = { id: string; title: string; option_a: string; option_b: string; score_strategy: Strategy; score_config: Record<string, number | string>; order: number };
 type Player = { id: string; username: string; ready: boolean; connected: boolean; score: number };
-type Room = { room_id: string; status: string; owner_id: string | null; players: Player[]; settings: Settings; current_question_index: number; question_count: number; answered: number; phase_started_at?: string; phase_duration?: number; paused_status?: string; question?: { title: string; option_a: string; option_b: string }; result?: { counts: { A: number; B: number } } };
+type RoomClock = { revision: number; phase: string; server_time: string; running: boolean; started_at: string | null; ends_at: string | null; duration_ms: number | null; remaining_ms: number };
+type Room = { room_id: string; status: string; owner_id: string | null; players: Player[]; settings: Settings; current_question_index: number; question_count: number; answered: number; phase_started_at?: string; phase_duration?: number; clock: RoomClock; paused_status?: string; question?: { title: string; option_a: string; option_b: string }; result?: { counts: { A: number; B: number } } };
 type RecentGame = { id: string; room_id: string; game_name: string; finished_at: string; player_count: number; rank: number; score: number };
 type User = { id: string; username: string; avatar_url: string; created_at: string | null; last_active_at: string | null; stats: { games: number; wins: number; best_rank: number | null; average_rank: number | null }; recent_games: RecentGame[] };
 const nav: { section: Section; href: string; label: string }[] = [
@@ -29,9 +30,10 @@ const nav: { section: Section; href: string; label: string }[] = [
 ];
 const blankQuestion = (): Omit<Question, "id" | "order"> => ({ title: "", option_a: "", option_b: "", score_strategy: "majority", score_config: { winner_score: 1, loser_score: 0 } });
 
-function secondsRemaining(startedAt?: string, duration?: number): number {
-  if (!startedAt || duration === undefined) return 0;
-  return Math.max(0, Math.ceil((new Date(startedAt).getTime() + duration * 1000 - Date.now()) / 1000));
+function clockSecondsRemaining(clock: RoomClock | undefined, currentTime: number): number {
+  if (!clock) return 0;
+  if (!clock.running || !clock.ends_at) return Math.max(0, Math.ceil(clock.remaining_ms / 1000));
+  return Math.max(0, Math.ceil((new Date(clock.ends_at).getTime() - currentTime) / 1000));
 }
 
 function isLocalUrl(value: string): boolean {
@@ -61,7 +63,7 @@ export default function AdminDashboard({ section }: { section: Section }) {
   const [rooms, setRooms] = useState<Room[]>([]); const [selectedRoom, setSelectedRoom] = useState<Room | null>(null); const [roomDraft, setRoomDraft] = useState({ game_name: "", max_players: 12 });
   const [users, setUsers] = useState<User[]>([]); const [editingUser, setEditingUser] = useState<User | null>(null); const [userName, setUserName] = useState("");
   const [questions, setQuestions] = useState<Question[]>([]); const [draft, setDraft] = useState<Omit<Question, "id" | "order">>(blankQuestion()); const [editingQuestion, setEditingQuestion] = useState<Question | null>(null); const [questionEditorOpen, setQuestionEditorOpen] = useState(false);
-  const [settings, setSettings] = useState<SettingsDraft | null>(null); const [clock, setClock] = useState(0); const [gameUrl, setGameUrl] = useState("");
+  const [settings, setSettings] = useState<SettingsDraft | null>(null); const [clock, setClock] = useState(0); const [serverClockOffsetMs, setServerClockOffsetMs] = useState(0); const [gameUrl, setGameUrl] = useState("");
 
   async function request(path: string, init: RequestInit = {}) {
     const response = await fetch(`${api}${path}`, { ...init, headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, ...(init.headers || {}) } });
@@ -71,7 +73,11 @@ export default function AdminDashboard({ section }: { section: Section }) {
     return data;
   }
   async function loadRooms() {
+    const sentAt = Date.now();
     const loaded: Room[] = await request("/api/admin/rooms");
+    const receivedAt = Date.now();
+    const serverTime = loaded[0]?.clock?.server_time ? new Date(loaded[0].clock.server_time).getTime() : Number.NaN;
+    if (Number.isFinite(serverTime)) setServerClockOffsetMs(serverTime - (sentAt + receivedAt) / 2);
     setRooms(loaded); setSelectedRoom(current => current ? loaded.find(room => room.room_id === current.room_id) || null : null);
   }
   async function load() {
@@ -135,7 +141,10 @@ export default function AdminDashboard({ section }: { section: Section }) {
   const roomUrl = selectedRoom ? `${typeof window !== "undefined" ? window.location.origin : ""}/room/${selectedRoom.room_id}` : "";
   const gameUrlIsLocal = isLocalUrl(gameUrl);
   const editable = selectedRoom?.status === "WAITING";
-  const remaining = useMemo(() => selectedRoom?.status === "PAUSED" ? Math.ceil(selectedRoom.phase_duration || 0) : secondsRemaining(selectedRoom?.phase_started_at, selectedRoom?.phase_duration), [selectedRoom, clock]);
+  const remaining = useMemo(() => {
+    const clockRemaining = clockSecondsRemaining(selectedRoom?.clock, Date.now() + serverClockOffsetMs);
+    return selectedRoom?.status === "COUNTDOWN" ? Math.max(0, clockRemaining - 1) : clockRemaining;
+  }, [selectedRoom, clock, serverClockOffsetMs]);
   if (token === null) return <main id="main-content" className="admin-page" aria-busy="true" aria-label="管理画面を読み込んでいます。" />;
   if (!token) return <main id="main-content" className="admin-login">
     <header className="page-heading"><div><span className="eyebrow">ゲーム管理</span><h1>管理コンソール</h1></div><a className="secondary admin-button" href="/">ロビーに戻る</a></header>

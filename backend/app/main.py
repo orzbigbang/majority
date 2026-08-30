@@ -1,18 +1,23 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
+import hashlib
+import hmac
+import json
+import logging
 import os
 import secrets
 import time
 from contextlib import asynccontextmanager
-from datetime import timedelta
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import ValidationError
 
-from .game import COUNTDOWN_START_CUE_DURATION, GameManager
+from .game import GameManager
 from .avatar_storage import AvatarStorage
 from .models import AnswerPayload, EmojiReactionPayload, GameHistoryAnswer, GameHistoryRecord, GameSettings, GameStatus, IdentityRequest, JoinRequest, LoginRequest, PlayerProfileUpdate, Question, RoomCreateRequest, RoomSettingsUpdate, RoomUpdate, UserProfile, UserProfileUpdate, now
 from .repository import FirestoreGameRepository
@@ -21,25 +26,44 @@ from .repository.base import GameRepository
 manager = GameManager()
 repository: GameRepository | None = FirestoreGameRepository() if os.getenv("FIRESTORE_ENABLED", "false").lower() == "true" else None
 avatar_storage: AvatarStorage | None = AvatarStorage() if os.getenv("AVATAR_STORAGE_ENABLED", "false").lower() == "true" else None
-admin_tokens: set[str] = set()
 connections: dict[str, set[WebSocket]] = {}
 websocket_players: dict[WebSocket, tuple[str, str]] = {}
+websocket_send_locks: dict[WebSocket, asyncio.Lock] = {}
+websocket_priority_waiters: dict[WebSocket, int] = {}
 volatile_users: dict[str, UserProfile] = {}
 volatile_history: dict[str, list[GameHistoryRecord]] = {}
 saved_game_runs: set[str] = set()
 reaction_history: dict[tuple[str, str], list[float]] = {}
+room_reaction_history: dict[str, list[float]] = {}
+logger = logging.getLogger(__name__)
+
+WEBSOCKET_SEND_TIMEOUT_SECONDS = 1.5
+ROOM_REACTION_LIMIT_PER_SECOND = 20
+ADMIN_TOKEN_TTL_SECONDS = int(os.getenv("ADMIN_TOKEN_TTL_SECONDS", "43200"))
 
 
 def record_reaction(room_id: str, player_id: str) -> None:
     current_time = time.monotonic()
     key = (room_id, player_id)
     history = [sent_at for sent_at in reaction_history.get(key, []) if current_time - sent_at < 60]
+    room_history = [sent_at for sent_at in room_reaction_history.get(room_id, []) if current_time - sent_at < 1]
     if history and current_time - history[-1] < 0.8:
         raise HTTPException(429, "REACTION_RATE_LIMITED")
     if sum(current_time - sent_at < 5 for sent_at in history) >= 3 or len(history) >= 12:
         raise HTTPException(429, "REACTION_RATE_LIMITED")
+    if len(room_history) >= ROOM_REACTION_LIMIT_PER_SECOND:
+        raise HTTPException(429, "ROOM_REACTION_RATE_LIMITED")
     history.append(current_time)
+    room_history.append(current_time)
     reaction_history[key] = history
+    room_reaction_history[room_id] = room_history
+
+
+def clear_room_reactions(room_id: str) -> None:
+    reaction_history_keys = [key for key in reaction_history if key[0] == room_id]
+    for key in reaction_history_keys:
+        reaction_history.pop(key, None)
+    room_reaction_history.pop(room_id, None)
 
 
 def get_user(user_id: str) -> UserProfile | None:
@@ -102,44 +126,139 @@ def save_finished_game(room) -> None:
     saved_game_runs.add(room.game_run_id)
 
 
+async def send_message(ws: WebSocket, message_type: str, payload: dict, *, droppable: bool = False) -> bool:
+    lock = websocket_send_locks.setdefault(ws, asyncio.Lock())
+    if droppable and (lock.locked() or websocket_priority_waiters.get(ws, 0) > 0):
+        return True
+    if not droppable:
+        websocket_priority_waiters[ws] = websocket_priority_waiters.get(ws, 0) + 1
+
+    async def send_in_order() -> None:
+        async with lock:
+            await ws.send_json({"type": message_type, "payload": payload})
+
+    try:
+        await asyncio.wait_for(send_in_order(), timeout=WEBSOCKET_SEND_TIMEOUT_SECONDS)
+        return True
+    except Exception:
+        binding = websocket_players.get(ws)
+        if binding:
+            connections.get(binding[0], set()).discard(ws)
+        return False
+    finally:
+        if not droppable:
+            remaining_waiters = websocket_priority_waiters.get(ws, 1) - 1
+            if remaining_waiters > 0:
+                websocket_priority_waiters[ws] = remaining_waiters
+            else:
+                websocket_priority_waiters.pop(ws, None)
+
+
 async def broadcast(room_id: str, message_type: str, payload: dict) -> None:
-    dead: list[WebSocket] = []
-    for ws in connections.get(room_id, set()).copy():
-        try: await ws.send_json({"type": message_type, "payload": payload})
-        except Exception: dead.append(ws)
-    for ws in dead: connections.get(room_id, set()).discard(ws)
+    targets = tuple(connections.get(room_id, set()))
+    if not targets:
+        return
+    droppable = message_type == "emoji_reaction"
+    await asyncio.gather(*(send_message(ws, message_type, payload, droppable=droppable) for ws in targets))
+
+
+def _token_part(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
+
+
+def _admin_signing_key() -> bytes:
+    password = os.getenv("ADMIN_PASSWORD", "change-me").encode("utf-8")
+    return hashlib.sha256(b"majority-admin-session\0" + password).digest()
+
+
+def create_admin_token(ttl_seconds: int = ADMIN_TOKEN_TTL_SECONDS) -> str:
+    payload = json.dumps(
+        {"v": 1, "exp": int(time.time()) + ttl_seconds, "nonce": secrets.token_urlsafe(12)},
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    encoded_payload = _token_part(payload)
+    signature = hmac.new(_admin_signing_key(), encoded_payload.encode("ascii"), hashlib.sha256).digest()
+    return f"{encoded_payload}.{_token_part(signature)}"
+
+
+def verify_admin_token(token: str) -> bool:
+    try:
+        encoded_payload, encoded_signature = token.split(".", 1)
+        expected = _token_part(hmac.new(_admin_signing_key(), encoded_payload.encode("ascii"), hashlib.sha256).digest())
+        if not hmac.compare_digest(encoded_signature, expected):
+            return False
+        padding = "=" * (-len(encoded_payload) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(encoded_payload + padding))
+        return payload.get("v") == 1 and isinstance(payload.get("exp"), int) and payload["exp"] > int(time.time())
+    except (ValueError, TypeError, binascii.Error, json.JSONDecodeError):
+        return False
 
 
 def admin(authorization: str | None = Header(default=None)) -> None:
-    if not authorization or authorization.removeprefix("Bearer ") not in admin_tokens:
+    if not authorization or not verify_admin_token(authorization.removeprefix("Bearer ")):
         raise HTTPException(401, "ADMIN_UNAUTHORIZED")
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    room_watch = None
     if repository:
         manager.load_persistent_data(repository)
+        event_loop = asyncio.get_running_loop()
+
+        async def apply_remote_room(room_id: str, state) -> None:
+            had_room = room_id in manager.rooms
+            changed = manager.accept_remote_state(room_id, state)
+            if changed:
+                await broadcast(room_id, "game_state", changed.snapshot())
+            elif state is None and had_room:
+                await broadcast(room_id, "room_deleted", {"room_id": room_id})
+
+        def on_room_change(room_id: str, state) -> None:
+            event_loop.call_soon_threadsafe(asyncio.create_task, apply_remote_room(room_id, state))
+
+        room_watch = repository.watch_rooms(on_room_change)
     async def timer() -> None:
         while True:
-            await asyncio.sleep(1)
-            for room in list(manager.rooms.values()):
-                if manager.rooms.get(room.id) is not room:
-                    continue
-                current_time = now()
-                if room.status == GameStatus.COUNTDOWN and room.countdown_started_at and current_time >= room.countdown_started_at + timedelta(seconds=room.settings.countdown_duration + COUNTDOWN_START_CUE_DURATION):
-                    await manager.begin_question(room)
-                    await broadcast(room.id, "game_state", room.snapshot())
-                elif room.status == GameStatus.QUESTION and room.question_started_at and current_time >= room.question_started_at + timedelta(seconds=room.settings.question_duration):
-                    result = await manager.lock_and_score(room)
-                    await broadcast(room.id, "game_state", room.snapshot())
-                    await broadcast(room.id, "result", result)
-                elif room.status == GameStatus.SHOW_RESULT and room.result_started_at and current_time >= room.result_started_at + timedelta(seconds=room.settings.result_duration):
-                    await manager.next(room.id)
-                    save_finished_game(room)
-                    await broadcast(room.id, "game_state", room.snapshot())
+            manager.clock_changed.clear()
+            current_time = now()
+            active_rooms = [(room, deadline) for room in list(manager.rooms.values()) if (deadline := room.clock_deadline()) is not None]
+            due_rooms = [room for room, deadline in active_rooms if deadline <= current_time]
+            for room in due_rooms:
+                try:
+                    if room.status == GameStatus.COUNTDOWN:
+                        changed = await manager.begin_question(room)
+                        await broadcast(changed.id, "game_state", changed.snapshot())
+                    elif room.status == GameStatus.QUESTION:
+                        result = await manager.lock_and_score(room)
+                        changed = manager.room(room.id)
+                        await broadcast(changed.id, "game_state", changed.snapshot())
+                        await broadcast(changed.id, "result", result)
+                    elif room.status == GameStatus.SHOW_RESULT:
+                        changed = await manager.next(room.id)
+                        await asyncio.to_thread(save_finished_game, changed)
+                        await broadcast(changed.id, "game_state", changed.snapshot())
+                except HTTPException as exc:
+                    if exc.status_code != 409:
+                        logger.warning("Could not advance room %s: %s", room.id, exc.detail)
+                except Exception:
+                    logger.exception("Could not advance room %s", room.id)
+            if due_rooms:
+                continue
+            nearest_deadline = min((deadline for _, deadline in active_rooms), default=None)
+            wait_seconds = max(0.01, (nearest_deadline - current_time).total_seconds()) if nearest_deadline else 60.0
+            try:
+                await asyncio.wait_for(manager.clock_changed.wait(), timeout=wait_seconds)
+            except TimeoutError:
+                pass
     task = asyncio.create_task(timer())
-    yield
-    task.cancel()
+    try:
+        yield
+    finally:
+        task.cancel()
+        if room_watch:
+            room_watch.unsubscribe()
 
 
 app = FastAPI(title="マジョリティ API", lifespan=lifespan)
@@ -153,8 +272,7 @@ def health() -> dict: return {"ok": True}
 @app.post("/api/admin/login")
 def login(body: LoginRequest) -> dict:
     if not secrets.compare_digest(body.password, os.getenv("ADMIN_PASSWORD", "change-me")): raise HTTPException(401, "ADMIN_UNAUTHORIZED")
-    token = secrets.token_urlsafe(32); admin_tokens.add(token)
-    return {"token": token}
+    return {"token": create_admin_token()}
 
 
 @app.get("/api/admin/questions")
@@ -289,6 +407,9 @@ async def delete_room(room_id: str, _: None = Depends(admin)) -> dict:
     for websocket in connections.pop(room.id, set()):
         try: await websocket.close(code=1000)
         except Exception: pass
+        websocket_send_locks.pop(websocket, None)
+        websocket_priority_waiters.pop(websocket, None)
+    clear_room_reactions(room.id)
     return {"ok": True}
 
 
@@ -318,12 +439,12 @@ async def create_public_room(request: RoomCreateRequest) -> dict:
         "question_duration": request.question_duration,
         "result_duration": request.between_question_duration,
     })
-    room = manager.create_room(settings, request.question_count)
+    room = await asyncio.to_thread(manager.create_room, settings, request.question_count)
     try:
-        profile = ensure_user_profile(request.player_id or str(uuid4()), request.username)
+        profile = await asyncio.to_thread(ensure_user_profile, request.player_id or str(uuid4()), request.username)
         player = await manager.join(room.id, profile.username, request.session_id, profile.id)
     except Exception:
-        manager.rooms.pop(room.id, None)
+        await asyncio.to_thread(manager.discard_room, room.id)
         raise
     return {
         "player_id": player.id,
@@ -394,12 +515,12 @@ async def start(room_id: str, _: None = Depends(admin)) -> dict:
 
 @app.post("/api/admin/rooms/{room_id}/next")
 async def next_question(room_id: str, _: None = Depends(admin)) -> dict:
-    room = await manager.next(room_id); save_finished_game(room); await broadcast(room.id, "game_state", room.snapshot()); return room.snapshot()
+    room = await manager.next(room_id); await asyncio.to_thread(save_finished_game, room); await broadcast(room.id, "game_state", room.snapshot()); return room.snapshot()
 
 
 @app.post("/api/admin/rooms/{room_id}/lock")
 async def lock(room_id: str, _: None = Depends(admin)) -> dict:
-    room = manager.room(room_id); result = await manager.lock_and_score(room); await broadcast(room.id, "game_state", room.snapshot()); await broadcast(room.id, "result", result); return result
+    room = await manager.ensure_room(room_id); result = await manager.lock_and_score(room); await broadcast(room.id, "game_state", room.snapshot()); await broadcast(room.id, "result", result); return result
 
 
 @app.post("/api/admin/rooms/{room_id}/pause")
@@ -420,7 +541,8 @@ async def resume(room_id: str, _: None = Depends(admin)) -> dict:
 
 @app.post("/api/admin/rooms/{room_id}/reset")
 async def reset(room_id: str, _: None = Depends(admin)) -> dict:
-    save_finished_game(manager.room(room_id))
+    existing = await manager.ensure_room(room_id)
+    await asyncio.to_thread(save_finished_game, existing)
     room = await manager.reset(room_id)
     snapshot = room.snapshot()
     await broadcast(room.id, "game_state", snapshot)
@@ -430,7 +552,7 @@ async def reset(room_id: str, _: None = Depends(admin)) -> dict:
 @app.post("/api/admin/rooms/{room_id}/end")
 async def end(room_id: str, _: None = Depends(admin)) -> dict:
     room = await manager.end(room_id)
-    save_finished_game(room)
+    await asyncio.to_thread(save_finished_game, room)
     snapshot = room.snapshot()
     await broadcast(room.id, "game_state", snapshot)
     return snapshot
@@ -438,8 +560,8 @@ async def end(room_id: str, _: None = Depends(admin)) -> dict:
 
 @app.post("/api/rooms/{room_id}/join")
 async def join(room_id: str, request: JoinRequest) -> dict:
-    manager.room(room_id)
-    profile = ensure_user_profile(request.player_id or str(uuid4()), request.username)
+    await manager.ensure_room(room_id)
+    profile = await asyncio.to_thread(ensure_user_profile, request.player_id or str(uuid4()), request.username)
     player = await manager.join(room_id, profile.username, request.session_id, profile.id)
     room = manager.room(room_id)
     await broadcast(room.id, "game_state", room.snapshot())
@@ -453,20 +575,21 @@ async def join(room_id: str, request: JoinRequest) -> dict:
 
 
 @app.get("/api/rooms/{room_id}")
-def room(room_id: str) -> dict: return manager.room(room_id).snapshot()
+async def room(room_id: str) -> dict: return (await manager.ensure_room(room_id)).snapshot()
 
 
 @app.websocket("/ws/rooms/{room_id}")
 async def websocket(ws: WebSocket, room_id: str) -> None:
     await ws.accept()
     try:
-        room = manager.room(room_id.upper())
+        room = await manager.ensure_room(room_id.upper())
         connected_player_id = ws.query_params.get("player_id")
         connected_session_id = ws.query_params.get("session_id")
         player = room.players.get(connected_player_id or "")
-        if not player or not connected_session_id or connected_session_id != player.session_id:
+        if not player or not player.matches_session(connected_session_id):
             await ws.close(code=1008)
             return
+        player.session_id = connected_session_id
         room = await manager.set_connected(room.id, connected_player_id, True)
         connections.setdefault(room.id, set()).add(ws)
         websocket_players[ws] = (room.id, connected_player_id)
@@ -477,15 +600,20 @@ async def websocket(ws: WebSocket, room_id: str) -> None:
     try:
         while True:
             message = await ws.receive_json()
+            if message.get("type") == "time_sync":
+                client_sent_at = (message.get("payload") or {}).get("client_sent_at")
+                client_monotonic = (message.get("payload") or {}).get("client_monotonic")
+                if isinstance(client_sent_at, (int, float)):
+                    await send_message(ws, "time_sync", {"client_sent_at": client_sent_at, "client_monotonic": client_monotonic, "server_time": now().isoformat()}, droppable=True)
             if message.get("type") in {"answer", "select_answer"}:
                 try:
                     payload = AnswerPayload.model_validate(message.get("payload"))
                     changed = await (manager.answer(room.id, connected_player_id, payload.question_id, payload.choice) if message.get("type") == "answer" else manager.select_answer(room.id, connected_player_id, payload.question_id, payload.choice))
                     if message.get("type") == "answer":
-                        await ws.send_json({"type": "answer_saved", "payload": {"choice": payload.choice}})
+                        await send_message(ws, "answer_saved", {"choice": payload.choice})
                     await broadcast(room.id, "answer_count", {"answered": len(changed.draft_answers), "total": len(changed.players)})
-                except HTTPException as exc: await ws.send_json({"type": "error", "payload": {"code": str(exc.detail), "message": str(exc.detail)}})
-                except ValidationError: await ws.send_json({"type": "error", "payload": {"code": "INVALID_ANSWER", "message": "INVALID_ANSWER"}})
+                except HTTPException as exc: await send_message(ws, "error", {"code": str(exc.detail), "message": str(exc.detail)})
+                except ValidationError: await send_message(ws, "error", {"code": "INVALID_ANSWER", "message": "INVALID_ANSWER"})
             if message.get("type") == "emoji_reaction":
                 try:
                     payload = EmojiReactionPayload.model_validate(message.get("payload"))
@@ -505,7 +633,7 @@ async def websocket(ws: WebSocket, room_id: str) -> None:
                         raise HTTPException(404, "REACTION_TARGET_UNAVAILABLE")
                     record_reaction(room.id, connected_player_id)
                     await broadcast(room.id, "emoji_reaction", {
-                        "event_id": payload.event_id,
+                        "event_id": str(uuid4()),
                         "reaction_id": payload.reaction_id,
                         "sender_id": sender.id,
                         "sender_username": sender.username,
@@ -514,25 +642,25 @@ async def websocket(ws: WebSocket, room_id: str) -> None:
                         "scope_id": expected_scope,
                         "sent_at": now().isoformat(),
                     })
-                except HTTPException as exc: await ws.send_json({"type": "error", "payload": {"code": str(exc.detail), "message": str(exc.detail)}})
-                except ValidationError: await ws.send_json({"type": "error", "payload": {"code": "INVALID_REACTION", "message": "INVALID_REACTION"}})
+                except HTTPException as exc: await send_message(ws, "error", {"code": str(exc.detail), "message": str(exc.detail)})
+                except ValidationError: await send_message(ws, "error", {"code": "INVALID_REACTION", "message": "INVALID_REACTION"})
             if message.get("type") == "ready":
                 try:
                     requested_ready = (message.get("payload") or {}).get("ready")
                     changed = await manager.mark_ready(room.id, connected_player_id, requested_ready if isinstance(requested_ready, bool) else None)
                     await broadcast(room.id, "game_state", changed.snapshot())
-                except HTTPException as exc: await ws.send_json({"type": "error", "payload": {"code": str(exc.detail), "message": str(exc.detail)}})
+                except HTTPException as exc: await send_message(ws, "error", {"code": str(exc.detail), "message": str(exc.detail)})
             if message.get("type") == "start":
                 try:
                     changed = await manager.start(room.id, connected_player_id)
                     await broadcast(room.id, "game_state", changed.snapshot())
-                except HTTPException as exc: await ws.send_json({"type": "error", "payload": {"code": str(exc.detail), "message": str(exc.detail)}})
+                except HTTPException as exc: await send_message(ws, "error", {"code": str(exc.detail), "message": str(exc.detail)})
             if message.get("type") == "transfer_owner":
                 try:
                     new_owner_id = str((message.get("payload") or {}).get("player_id", ""))
                     changed = await manager.transfer_owner(room.id, connected_player_id, new_owner_id)
                     await broadcast(room.id, "game_state", changed.snapshot())
-                except HTTPException as exc: await ws.send_json({"type": "error", "payload": {"code": str(exc.detail), "message": str(exc.detail)}})
+                except HTTPException as exc: await send_message(ws, "error", {"code": str(exc.detail), "message": str(exc.detail)})
             if message.get("type") == "update_room_settings":
                 try:
                     settings = RoomSettingsUpdate.model_validate(message.get("payload"))
@@ -544,29 +672,34 @@ async def websocket(ws: WebSocket, room_id: str) -> None:
                         settings.question_duration,
                         settings.between_question_duration,
                     )
-                    await ws.send_json({"type": "room_settings_saved", "payload": {"ok": True}})
+                    await send_message(ws, "room_settings_saved", {"ok": True})
                     await broadcast(room.id, "game_state", changed.snapshot())
-                except HTTPException as exc: await ws.send_json({"type": "error", "payload": {"code": str(exc.detail), "message": str(exc.detail)}})
-                except ValidationError: await ws.send_json({"type": "error", "payload": {"code": "INVALID_ROOM_SETTINGS", "message": "INVALID_ROOM_SETTINGS"}})
+                except HTTPException as exc: await send_message(ws, "error", {"code": str(exc.detail), "message": str(exc.detail)})
+                except ValidationError: await send_message(ws, "error", {"code": "INVALID_ROOM_SETTINGS", "message": "INVALID_ROOM_SETTINGS"})
             if message.get("type") == "return_to_room":
                 try:
-                    save_finished_game(room)
+                    await asyncio.to_thread(save_finished_game, room)
                     changed = await manager.reset(room.id, connected_player_id)
                     await broadcast(room.id, "game_state", changed.snapshot())
-                except HTTPException as exc: await ws.send_json({"type": "error", "payload": {"code": str(exc.detail), "message": str(exc.detail)}})
+                except HTTPException as exc: await send_message(ws, "error", {"code": str(exc.detail), "message": str(exc.detail)})
     except WebSocketDisconnect: pass
     finally:
         connections.get(room.id, set()).discard(ws)
+        websocket_send_locks.pop(ws, None)
+        websocket_priority_waiters.pop(ws, None)
         binding = websocket_players.pop(ws, None)
         if binding:
             active_for_player = any(current_room == binding[0] and current_player == binding[1] for current_room, current_player in websocket_players.values())
             if not active_for_player:
                 try:
-                    disconnected_room = manager.room(binding[0])
+                    disconnected_room = await manager.ensure_room(binding[0])
                     if disconnected_room.status == GameStatus.WAITING:
                         changed = await manager.leave(binding[0], binding[1])
                     else:
                         changed = await manager.set_connected(binding[0], binding[1], False)
                     await broadcast(changed.id, "game_state", changed.snapshot())
+                    if changed.id not in manager.rooms:
+                        clear_room_reactions(changed.id)
                 except HTTPException:
+                    clear_room_reactions(binding[0])
                     pass

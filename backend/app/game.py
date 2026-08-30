@@ -4,15 +4,43 @@ import asyncio
 import secrets
 from copy import deepcopy
 from datetime import timedelta
+from functools import wraps
 from uuid import uuid4
 
 from fastapi import HTTPException
 
-from .models import Answer, GameSettings, GameStatus, Player, Question, now
-from .repository.base import GameRepository
+from .models import Answer, GameSettings, GameStatus, Player, Question, RoomState, now
+from .repository.base import GameRepository, RoomConflictError
 from .scoring import STRATEGIES
 
 COUNTDOWN_START_CUE_DURATION = 1
+
+
+def retry_room_conflicts(operation):
+    """Replay an idempotent room command when another instance wins the CAS."""
+
+    @wraps(operation)
+    async def wrapped(self, room_or_id, *args, **kwargs):
+        room_id = room_or_id.id if isinstance(room_or_id, Room) else str(room_or_id)
+        normalized_id = room_id.upper()
+        if normalized_id not in self.rooms and self.repository:
+            state = await asyncio.to_thread(self.repository.get_room, normalized_id)
+            if state:
+                self._cache_state(state)
+        for attempt in range(4):
+            try:
+                return await operation(self, room_or_id, *args, **kwargs)
+            except RoomConflictError:
+                self.rooms.pop(normalized_id, None)
+                if self.repository:
+                    state = await asyncio.to_thread(self.repository.get_room, room_id)
+                    if state:
+                        self._cache_state(state)
+                if attempt == 3:
+                    raise HTTPException(409, "ROOM_STATE_CHANGED")
+        raise HTTPException(409, "ROOM_STATE_CHANGED")
+
+    return wrapped
 
 
 class Room:
@@ -33,15 +61,131 @@ class Room:
         self.game_run_id: str | None = None
         self.paused_status: GameStatus | None = None
         self.paused_remaining_seconds: float | None = None
+        self.clock_version = 0
+        self.version = 0
+        self.created_at = now()
+        self.updated_at = self.created_at
         self.lock = asyncio.Lock()
+
+    @classmethod
+    def from_state(cls, state: RoomState) -> Room:
+        room = cls(state.id, [question.model_copy(deep=True) for question in state.questions], state.settings.model_copy(deep=True))
+        room.apply_state(state)
+        return room
+
+    def apply_state(self, state: RoomState) -> None:
+        local_sessions = {player.id: player.session_id for player in self.players.values() if player.session_id}
+        self.questions = [question.model_copy(deep=True) for question in state.questions]
+        self.settings = state.settings.model_copy(deep=True)
+        self.status = state.status
+        self.players = {}
+        for stored_player in state.players:
+            player = stored_player.model_copy(deep=True)
+            local_session = local_sessions.get(player.id)
+            if local_session and player.matches_session(local_session):
+                player.session_id = local_session
+            self.players[player.id] = player
+        self.owner_id = state.owner_id
+        self.answers = {answer.player_id: answer.model_copy(deep=True) for answer in state.answers}
+        self.draft_answers = {answer.player_id: answer.model_copy(deep=True) for answer in state.draft_answers}
+        self.current_question_index = state.current_question_index
+        self.question_started_at = state.question_started_at
+        self.countdown_started_at = state.countdown_started_at
+        self.result_started_at = state.result_started_at
+        self.last_result = deepcopy(state.last_result)
+        self.history = deepcopy(state.history)
+        self.previous_game = deepcopy(state.previous_game)
+        self.game_run_id = state.game_run_id
+        self.paused_status = state.paused_status
+        self.paused_remaining_seconds = state.paused_remaining_seconds
+        self.clock_version = state.clock_version
+        self.version = state.version
+        self.created_at = state.created_at
+        self.updated_at = state.updated_at
+
+    def to_state(self) -> RoomState:
+        return RoomState(
+            id=self.id,
+            questions=[question.model_copy(deep=True) for question in self.questions],
+            settings=self.settings.model_copy(deep=True),
+            status=self.status,
+            players=[
+                player.model_copy(
+                    deep=True,
+                    update={
+                        "session_id": None,
+                        "session_hash": player.session_hash or (Player.hash_session(player.session_id) if player.session_id else None),
+                    },
+                )
+                for player in self.players.values()
+            ],
+            owner_id=self.owner_id,
+            answers=[answer.model_copy(deep=True) for answer in self.answers.values()],
+            draft_answers=[answer.model_copy(deep=True) for answer in self.draft_answers.values()],
+            current_question_index=self.current_question_index,
+            question_started_at=self.question_started_at,
+            countdown_started_at=self.countdown_started_at,
+            result_started_at=self.result_started_at,
+            last_result=deepcopy(self.last_result),
+            history=deepcopy(self.history),
+            previous_game=deepcopy(self.previous_game),
+            game_run_id=self.game_run_id,
+            paused_status=self.paused_status,
+            paused_remaining_seconds=self.paused_remaining_seconds,
+            clock_version=self.clock_version,
+            version=self.version,
+            created_at=self.created_at,
+            updated_at=self.updated_at,
+        )
 
     @property
     def current_question(self) -> Question | None:
         return self.questions[self.current_question_index] if self.current_question_index < len(self.questions) else None
 
+    def advance_clock_version(self) -> None:
+        self.clock_version += 1
+
+    def clock_metadata(self) -> dict:
+        """Return the authoritative virtual clock shared by every room client."""
+        server_time = now()
+        clock_started_at = None
+        clock_duration = None
+        clock_phase = self.paused_status if self.status == GameStatus.PAUSED and self.paused_status else self.status
+        if clock_phase == GameStatus.COUNTDOWN:
+            clock_started_at, clock_duration = self.countdown_started_at, self.settings.countdown_duration + COUNTDOWN_START_CUE_DURATION
+        elif clock_phase == GameStatus.QUESTION:
+            clock_started_at, clock_duration = self.question_started_at, self.settings.question_duration
+        elif clock_phase == GameStatus.SHOW_RESULT:
+            clock_started_at, clock_duration = self.result_started_at, self.settings.result_duration
+        clock_ends_at = clock_started_at + timedelta(seconds=clock_duration) if clock_started_at and clock_duration is not None and self.status != GameStatus.PAUSED else None
+        clock_remaining_ms = (
+            max(0, int(self.paused_remaining_seconds * 1000))
+            if self.status == GameStatus.PAUSED and self.paused_remaining_seconds is not None
+            else max(0, int((clock_ends_at - server_time).total_seconds() * 1000)) if clock_ends_at else 0
+        )
+        return {
+            "revision": self.clock_version,
+            "phase": clock_phase,
+            "server_time": server_time.isoformat(),
+            "running": clock_ends_at is not None and self.status != GameStatus.PAUSED,
+            "started_at": clock_started_at.isoformat() if clock_started_at else None,
+            "ends_at": clock_ends_at.isoformat() if clock_ends_at else None,
+            "duration_ms": int(clock_duration * 1000) if clock_duration is not None else None,
+            "remaining_ms": clock_remaining_ms,
+        }
+
+    def clock_deadline(self):
+        if self.status == GameStatus.COUNTDOWN and self.countdown_started_at:
+            return self.countdown_started_at + timedelta(seconds=self.settings.countdown_duration + COUNTDOWN_START_CUE_DURATION)
+        if self.status == GameStatus.QUESTION and self.question_started_at:
+            return self.question_started_at + timedelta(seconds=self.settings.question_duration)
+        if self.status == GameStatus.SHOW_RESULT and self.result_started_at:
+            return self.result_started_at + timedelta(seconds=self.settings.result_duration)
+        return None
+
     def snapshot(self, include_question: bool = True) -> dict:
         question = self.current_question
-        payload = {"room_id": self.id, "status": self.status, "owner_id": self.owner_id, "players": [{"id": p.id, "username": p.username, "score": p.score, "connected": p.connected, "ready": p.ready} for p in self.players.values()], "current_question_index": self.current_question_index, "question_count": len(self.questions), "answered": len(self.draft_answers), "settings": self.settings.model_dump(), "previous_game": self.previous_game}
+        payload = {"room_id": self.id, "status": self.status, "owner_id": self.owner_id, "players": [{"id": p.id, "username": p.username, "score": p.score, "connected": p.connected, "ready": p.ready} for p in self.players.values()], "current_question_index": self.current_question_index, "question_count": len(self.questions), "answered": len(self.draft_answers), "settings": self.settings.model_dump(), "previous_game": self.previous_game, "clock": self.clock_metadata()}
         if self.status == GameStatus.COUNTDOWN:
             payload.update({"phase_started_at": self.countdown_started_at.isoformat() if self.countdown_started_at else None, "phase_duration": self.settings.countdown_duration})
         if include_question and question and (self.status == GameStatus.QUESTION or (self.status == GameStatus.PAUSED and self.paused_status == GameStatus.QUESTION)):
@@ -58,8 +202,10 @@ class Room:
 
 
 class GameManager:
-    def __init__(self) -> None:
+    def __init__(self, repository: GameRepository | None = None) -> None:
         self.rooms: dict[str, Room] = {}
+        self.repository = repository
+        self.clock_changed = asyncio.Event()
         self.questions: list[Question] = [
             Question(id="q1", title="猫と犬、どっちが好き？", option_a="猫", option_b="犬", order=1),
             Question(id="q2", title="朝型と夜型、どっち？", option_a="朝型", option_b="夜型", order=2),
@@ -67,7 +213,12 @@ class GameManager:
         ]
         self.settings = GameSettings()
 
+    def _advance_clock(self, room: Room) -> None:
+        room.advance_clock_version()
+        self.clock_changed.set()
+
     def load_persistent_data(self, repository: GameRepository) -> None:
+        self.repository = repository
         questions = repository.list_questions()
         if questions:
             self.questions = questions
@@ -94,6 +245,61 @@ class GameManager:
             self.settings = settings
         else:
             repository.save_settings(self.settings)
+        for state in repository.list_rooms():
+            self.rooms[state.id] = Room.from_state(state)
+
+    def _cache_state(self, state: RoomState) -> Room:
+        room = self.rooms.get(state.id)
+        if room:
+            room.apply_state(state)
+        else:
+            room = Room.from_state(state)
+            self.rooms[state.id] = room
+        return room
+
+    def _persist_room(self, room: Room, *, create: bool = False) -> Room:
+        room.updated_at = now()
+        if not self.repository:
+            return room
+        expected_version = None if create else room.version
+        saved = self.repository.save_room(room.to_state(), expected_version)
+        room.apply_state(saved)
+        return room
+
+    async def _persist_room_async(self, room: Room) -> Room:
+        room.updated_at = now()
+        if not self.repository:
+            return room
+        state = room.to_state()
+        saved = await asyncio.to_thread(self.repository.save_room, state, room.version)
+        # A watch callback can apply a newer version while this write is in flight.
+        if room.version <= saved.version:
+            room.apply_state(saved)
+        return room
+
+    async def _delete_room_async(self, room: Room) -> None:
+        if self.repository:
+            await asyncio.to_thread(self.repository.delete_room, room.id, room.version)
+
+    def discard_room(self, room_id: str) -> None:
+        room = self.rooms.pop(room_id.upper(), None)
+        if self.repository:
+            self.repository.delete_room(room_id, room.version if room else None)
+
+    def accept_remote_state(self, room_id: str, state: RoomState | None) -> Room | None:
+        """Apply a newer Firestore watch event, ignoring our own echoed writes."""
+        normalized_id = room_id.upper()
+        cached = self.rooms.get(normalized_id)
+        if state is None:
+            self.rooms.pop(normalized_id, None)
+            return None if cached else cached
+        if cached and state.version <= cached.version:
+            return None
+        previous_clock_version = cached.clock_version if cached else None
+        changed = self._cache_state(state)
+        if previous_clock_version is None or changed.clock_version != previous_clock_version:
+            self.clock_changed.set()
+        return changed
 
     def create_room(self, settings: GameSettings | None = None, question_count: int | None = None) -> Room:
         if not self.questions:
@@ -102,39 +308,63 @@ class GameManager:
         if question_count is not None and question_count > len(ordered_questions):
             raise HTTPException(400, "NOT_ENOUGH_QUESTIONS")
         alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-        while (room_id := "".join(secrets.choice(alphabet) for _ in range(4))) in self.rooms:
-            pass
-        room = Room(room_id, ordered_questions[:question_count] if question_count is not None else ordered_questions, (settings or self.settings).model_copy())
-        self.rooms[room_id] = room
-        return room
+        for _ in range(20):
+            room_id = "".join(secrets.choice(alphabet) for _ in range(4))
+            if room_id in self.rooms or (self.repository and self.repository.get_room(room_id)):
+                continue
+            room = Room(room_id, ordered_questions[:question_count] if question_count is not None else ordered_questions, (settings or self.settings).model_copy())
+            self.rooms[room_id] = room
+            try:
+                return self._persist_room(room, create=True)
+            except RoomConflictError:
+                self.rooms.pop(room_id, None)
+        raise HTTPException(503, "ROOM_ID_ALLOCATION_FAILED")
 
     def room(self, room_id: str) -> Room:
-        room = self.rooms.get(room_id.upper())
+        normalized_id = room_id.upper()
+        room = self.rooms.get(normalized_id)
         if not room:
             raise HTTPException(404, "ROOM_NOT_FOUND")
         return room
 
+    async def ensure_room(self, room_id: str) -> Room:
+        normalized_id = room_id.upper()
+        room = self.rooms.get(normalized_id)
+        if room:
+            return room
+        if self.repository:
+            state = await asyncio.to_thread(self.repository.get_room, normalized_id)
+            if state:
+                return self._cache_state(state)
+        raise HTTPException(404, "ROOM_NOT_FOUND")
+
+    @retry_room_conflicts
     async def join(self, room_id: str, username: str, session_id: str | None, player_id: str | None = None) -> Player:
         room = self.room(room_id)
         async with room.lock:
             if player_id and player_id in room.players:
                 existing = room.players[player_id]
-                if not session_id or session_id != existing.session_id:
+                if not existing.matches_session(session_id):
                     raise HTTPException(401, "INVALID_SESSION")
+                existing.session_id = session_id
                 existing.username = username.strip()
+                await self._persist_room_async(room)
                 return existing
             if session_id:
-                existing = next((p for p in room.players.values() if p.session_id == session_id), None)
+                existing = next((p for p in room.players.values() if p.matches_session(session_id)), None)
                 if existing:
+                    existing.session_id = session_id
                     return existing
             if room.status != GameStatus.WAITING:
                 raise HTTPException(409, "GAME_ALREADY_STARTED")
             if len(room.players) >= room.settings.max_players:
                 raise HTTPException(409, "ROOM_FULL")
-            player = Player(id=player_id or str(uuid4()), session_id=session_id or str(uuid4()), username=username.strip())
+            raw_session = session_id or str(uuid4())
+            player = Player(id=player_id or str(uuid4()), session_id=raw_session, session_hash=Player.hash_session(raw_session), username=username.strip())
             room.players[player.id] = player
             if room.owner_id is None:
                 room.owner_id = player.id
+            await self._persist_room_async(room)
             return player
 
     def lobby(self) -> list[dict]:
@@ -149,6 +379,7 @@ class GameManager:
             for room in sorted(self.rooms.values(), key=lambda item: item.id)
         ]
 
+    @retry_room_conflicts
     async def update_room(self, room_id: str, game_name: str | None, max_players: int | None) -> Room:
         room = self.room(room_id)
         async with room.lock:
@@ -160,8 +391,10 @@ class GameManager:
                 room.settings.max_players = max_players
             if game_name is not None:
                 room.settings.game_name = game_name.strip()
+            await self._persist_room_async(room)
             return room
 
+    @retry_room_conflicts
     async def update_room_settings(
         self,
         room_id: str,
@@ -186,16 +419,20 @@ class GameManager:
             room.settings.max_players = max_players
             room.settings.question_duration = question_duration
             room.settings.result_duration = between_question_duration
+            await self._persist_room_async(room)
             return room
 
+    @retry_room_conflicts
     async def delete_room(self, room_id: str) -> Room:
         room = self.room(room_id)
         async with room.lock:
             if room.status != GameStatus.WAITING:
                 raise HTTPException(409, "Only waiting rooms can be deleted")
+            await self._delete_room_async(room)
             del self.rooms[room.id]
             return room
 
+    @retry_room_conflicts
     async def start(self, room_id: str, requested_by: str | None = None) -> Room:
         room = self.room(room_id)
         async with room.lock:
@@ -213,8 +450,11 @@ class GameManager:
             else:
                 room.history.clear()
                 room.status, room.question_started_at = GameStatus.QUESTION, now()
+            self._advance_clock(room)
+            await self._persist_room_async(room)
             return room
 
+    @retry_room_conflicts
     async def mark_ready(self, room_id: str, player_id: str, ready: bool | None = None) -> Room:
         room = self.room(room_id)
         async with room.lock:
@@ -226,8 +466,10 @@ class GameManager:
             if player_id == room.owner_id:
                 raise HTTPException(409, "OWNER_DOES_NOT_READY")
             player.ready = not player.ready if ready is None else ready
+            await self._persist_room_async(room)
             return room
 
+    @retry_room_conflicts
     async def transfer_owner(self, room_id: str, owner_id: str, new_owner_id: str) -> Room:
         room = self.room(room_id)
         async with room.lock:
@@ -240,8 +482,10 @@ class GameManager:
             room.owner_id = new_owner_id
             room.players[owner_id].ready = False
             room.players[new_owner_id].ready = False
+            await self._persist_room_async(room)
             return room
 
+    @retry_room_conflicts
     async def set_connected(self, room_id: str, player_id: str, connected: bool) -> Room:
         room = self.room(room_id)
         async with room.lock:
@@ -249,8 +493,10 @@ class GameManager:
             if not player:
                 raise HTTPException(401, "INVALID_SESSION")
             player.connected = connected
+            await self._persist_room_async(room)
             return room
 
+    @retry_room_conflicts
     async def leave(self, room_id: str, player_id: str) -> Room:
         room = self.room(room_id)
         async with room.lock:
@@ -265,18 +511,27 @@ class GameManager:
             if not room.players:
                 room.owner_id = None
                 self.rooms.pop(room.id, None)
+                await self._delete_room_async(room)
             elif player_id == room.owner_id:
                 room.owner_id = next(iter(room.players))
                 room.players[room.owner_id].ready = False
+                await self._persist_room_async(room)
+            else:
+                await self._persist_room_async(room)
             return room
 
+    @retry_room_conflicts
     async def begin_question(self, room: Room) -> Room:
+        room = self.room(room.id)
         async with room.lock:
             if room.status != GameStatus.COUNTDOWN:
                 raise HTTPException(409, "Countdown is not active")
             room.status, room.question_started_at = GameStatus.QUESTION, now()
+            self._advance_clock(room)
+            await self._persist_room_async(room)
             return room
 
+    @retry_room_conflicts
     async def pause(self, room_id: str) -> Room:
         room = self.room(room_id)
         async with room.lock:
@@ -292,8 +547,11 @@ class GameManager:
             room.paused_remaining_seconds = max(0, duration - elapsed)
             room.paused_status = room.status
             room.status = GameStatus.PAUSED
+            self._advance_clock(room)
+            await self._persist_room_async(room)
             return room
 
+    @retry_room_conflicts
     async def resume(self, room_id: str) -> Room:
         room = self.room(room_id)
         async with room.lock:
@@ -309,8 +567,11 @@ class GameManager:
             room.status = resumed_status
             room.paused_status = None
             room.paused_remaining_seconds = None
+            self._advance_clock(room)
+            await self._persist_room_async(room)
             return room
 
+    @retry_room_conflicts
     async def reset(self, room_id: str, requested_by: str | None = None) -> Room:
         room = self.room(room_id)
         async with room.lock:
@@ -340,8 +601,11 @@ class GameManager:
                 player.score = 0
                 player.answer_time_ms = 0
                 player.ready = False
+            self._advance_clock(room)
+            await self._persist_room_async(room)
             return room
 
+    @retry_room_conflicts
     async def end(self, room_id: str) -> Room:
         room = self.room(room_id)
         async with room.lock:
@@ -350,27 +614,42 @@ class GameManager:
             room.status = GameStatus.FINISHED
             room.paused_status = None
             room.paused_remaining_seconds = None
+            self._advance_clock(room)
+            await self._persist_room_async(room)
             return room
 
+    @retry_room_conflicts
     async def select_answer(self, room_id: str, player_id: str, question_id: str, choice: str) -> Room:
         room = self.room(room_id)
         async with room.lock:
-            if room.status != GameStatus.QUESTION or not room.current_question or room.current_question.id != question_id:
-                raise HTTPException(409, "INVALID_ANSWER")
-            if room.question_started_at and now() > room.question_started_at + timedelta(seconds=room.settings.question_duration):
-                raise HTTPException(409, "QUESTION_EXPIRED")
-            if player_id not in room.players:
-                raise HTTPException(401, "INVALID_SESSION")
-            room.draft_answers[player_id] = Answer(player_id=player_id, question_id=question_id, choice=choice)
+            answer = self._validated_answer(room, player_id, question_id, choice)
+            room.draft_answers[player_id] = answer
+            await self._persist_room_async(room)
             return room
 
+    @retry_room_conflicts
     async def answer(self, room_id: str, player_id: str, question_id: str, choice: str) -> Room:
-        room = await self.select_answer(room_id, player_id, question_id, choice)
+        room = self.room(room_id)
         async with room.lock:
-            room.answers[player_id] = room.draft_answers[player_id]
+            answer = self._validated_answer(room, player_id, question_id, choice)
+            room.draft_answers[player_id] = answer
+            room.answers[player_id] = answer
+            await self._persist_room_async(room)
             return room
 
+    @staticmethod
+    def _validated_answer(room: Room, player_id: str, question_id: str, choice: str) -> Answer:
+        if room.status != GameStatus.QUESTION or not room.current_question or room.current_question.id != question_id:
+            raise HTTPException(409, "INVALID_ANSWER")
+        if room.question_started_at and now() > room.question_started_at + timedelta(seconds=room.settings.question_duration):
+            raise HTTPException(409, "QUESTION_EXPIRED")
+        if player_id not in room.players:
+            raise HTTPException(401, "INVALID_SESSION")
+        return Answer(player_id=player_id, question_id=question_id, choice=choice)
+
+    @retry_room_conflicts
     async def lock_and_score(self, room: Room) -> dict:
+        room = self.room(room.id)
         async with room.lock:
             if room.status != GameStatus.QUESTION:
                 raise HTTPException(409, "No active question")
@@ -397,8 +676,11 @@ class GameManager:
             room.status = GameStatus.SHOW_RESULT
             room.result_started_at = now()
             room.last_result = {"question_id": question.id, "question": review["question"], "counts": counts, "answers": review["answers"], "scores": results, "leaderboard": self.leaderboard(room)}
+            self._advance_clock(room)
+            await self._persist_room_async(room)
             return room.last_result
 
+    @retry_room_conflicts
     async def next(self, room_id: str) -> Room:
         room = self.room(room_id)
         async with room.lock:
@@ -413,6 +695,8 @@ class GameManager:
                 room.status = GameStatus.FINISHED
             else:
                 room.status, room.question_started_at = GameStatus.QUESTION, now()
+            self._advance_clock(room)
+            await self._persist_room_async(room)
             return room
 
     def leaderboard(self, room: Room) -> list[dict]:

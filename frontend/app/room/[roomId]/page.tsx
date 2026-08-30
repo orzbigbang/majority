@@ -7,7 +7,7 @@ import { BottomSheet } from "../../BottomSheet";
 import { apiMessage } from "../../ja";
 import { PlayerName } from "../../PlayerName";
 import { useRoomExitRedirect } from "../../useRoomExit";
-import { ReactionAnimationLayer, ReactionAvatarButton, ReactionEvent, ReactionId, ReactionPicker, ReactionTarget } from "./RoomReactions";
+import { ReactionAvatarButton, RoomReactionSurface, useRoomReactions } from "../../RoomReactions";
 
 const api = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const wsBase = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000";
@@ -23,6 +23,7 @@ type Result = { question_id: string; question: QuestionSummary; counts: { A: num
 type Review = { question: QuestionSummary; counts: { A: number; B: number }; answers: AnswerReview[] };
 type PreviousGame = { leaderboard: BoardEntry[]; review: Review[] };
 type RoomSettingsDraft = { max_players: string; question_count: string; question_duration: string; between_question_duration: string };
+type RoomClock = { revision: number; phase: State["status"]; server_time: string; running: boolean; started_at: string | null; ends_at: string | null; duration_ms: number | null; remaining_ms: number };
 type State = {
   status: "WAITING" | "COUNTDOWN" | "QUESTION" | "PAUSED" | "LOCK" | "SHOW_RESULT" | "FINISHED";
   owner_id: string | null;
@@ -33,6 +34,7 @@ type State = {
   settings: { game_name: string; max_players: number; question_duration: number; result_duration: number };
   phase_started_at?: string;
   phase_duration?: number;
+  clock: RoomClock;
   paused_status?: string;
   result?: Result | null;
   review?: Review[];
@@ -40,9 +42,10 @@ type State = {
   question?: { id: string; title: string; option_a: string; option_b: string };
 };
 
-function secondsRemaining(startedAt?: string, duration?: number, currentTime = Date.now()): number {
-  if (!startedAt || duration === undefined) return 0;
-  return Math.max(0, Math.ceil((new Date(startedAt).getTime() + duration * 1000 - currentTime) / 1000));
+function clockSecondsRemaining(clock: RoomClock | undefined, currentTime: number): number {
+  if (!clock) return 0;
+  if (!clock.running || !clock.ends_at) return Math.max(0, Math.ceil(clock.remaining_ms / 1000));
+  return Math.max(0, Math.ceil((new Date(clock.ends_at).getTime() - currentTime) / 1000));
 }
 
 function avatarUrl(playerId: string): string {
@@ -71,13 +74,18 @@ export default function RoomPage({ params }: { params: Promise<{ roomId: string 
   const [roomSettingsDraft, setRoomSettingsDraft] = useState<RoomSettingsDraft>({ max_players: "12", question_count: "3", question_duration: "20", between_question_duration: "5" });
   const [showPreviousGame, setShowPreviousGame] = useState(false);
   const [currentTime, setCurrentTime] = useState(Date.now());
-  const [reactionTarget, setReactionTarget] = useState<ReactionTarget | null>(null);
-  const [reactionAnchor, setReactionAnchor] = useState<HTMLElement | null>(null);
-  const [reactionBursts, setReactionBursts] = useState<ReactionEvent[]>([]);
-  const [reactionAnnouncement, setReactionAnnouncement] = useState("");
+  const [serverClockOffsetMs, setServerClockOffsetMs] = useState(0);
   const selectionQuestionId = useRef<string | null>(null);
-  const optimisticReactionIds = useRef(new Set<string>());
-  const lastReactionSentAt = useRef(0);
+  const clockSynchronized = useRef(false);
+  const clockSyncSamples = useRef<{ rtt: number; offset: number }[]>([]);
+  const latestClockRevision = useRef(-1);
+  const reactions = useRoomReactions({
+    ws,
+    identity,
+    status: state?.status,
+    scopeId: state?.status === "WAITING" ? "waiting" : result?.question_id,
+    onError: setMessage,
+  });
 
   useEffect(() => { params.then(value => setRoomId(value.roomId.toUpperCase())); }, [params]);
   useEffect(() => {
@@ -116,6 +124,17 @@ export default function RoomPage({ params }: { params: Promise<{ roomId: string 
     let reconnectTimer: number | null = null;
     let reconnectAttempt = 0;
     let connecting = false;
+    let clockSyncTimer: number | null = null;
+
+    function syncClock(target: WebSocket) {
+      if (target.readyState === WebSocket.OPEN) target.send(JSON.stringify({ type: "time_sync", payload: { client_sent_at: Date.now(), client_monotonic: performance.now() } }));
+    }
+
+    function useSnapshotClock(serverTime?: string) {
+      if (!serverTime || clockSynchronized.current) return;
+      const parsed = new Date(serverTime).getTime();
+      if (Number.isFinite(parsed)) setServerClockOffsetMs(parsed - Date.now());
+    }
 
     function scheduleReconnect() {
       if (!active || reconnectTimer !== null) return;
@@ -154,6 +173,8 @@ export default function RoomPage({ params }: { params: Promise<{ roomId: string 
       selectionQuestionId.current = data.room.question?.id || null;
       setSelectedChoice(data.draft_choice || null);
       setConfirmedChoice(data.confirmed_choice || null);
+      useSnapshotClock(data.room.clock?.server_time);
+      latestClockRevision.current = data.room.clock?.revision ?? -1;
       setState(data.room);
       setResult(data.room.result || null);
       setShowPreviousGame(data.room.status === "FINISHED");
@@ -161,32 +182,50 @@ export default function RoomPage({ params }: { params: Promise<{ roomId: string 
       socket = new WebSocket(`${wsBase}/ws/rooms/${roomId}?${query.toString()}`);
       socket.onopen = () => {
         reconnectAttempt = 0;
+        clockSynchronized.current = false;
+        clockSyncSamples.current = [];
         setWs(socket);
         setMessage("");
+        syncClock(socket!);
+        clockSyncTimer = window.setInterval(() => syncClock(socket!), 10_000);
       };
       socket.onmessage = event => {
         const item = JSON.parse(event.data);
         if (item.type === "game_state") {
+          useSnapshotClock(item.payload.clock?.server_time);
+          const incomingRevision = Number(item.payload.clock?.revision ?? -1);
+          if (incomingRevision < latestClockRevision.current) return;
+          latestClockRevision.current = incomingRevision;
           setState(item.payload);
           setResult(item.payload.result || null);
           if (item.payload.status !== "WAITING" || item.payload.owner_id !== player.player_id) setRoomSettingsOpen(false);
           if (item.payload.status === "FINISHED") setShowPreviousGame(true);
+        }
+        if (item.type === "time_sync") {
+          const sentAt = Number(item.payload?.client_sent_at);
+          const sentMonotonic = Number(item.payload?.client_monotonic);
+          const serverTime = new Date(item.payload?.server_time).getTime();
+          const roundTripTime = performance.now() - sentMonotonic;
+          if (Number.isFinite(serverTime) && Number.isFinite(roundTripTime) && roundTripTime >= 0) {
+            const sample = { rtt: roundTripTime, offset: serverTime - (sentAt + roundTripTime / 2) };
+            clockSyncSamples.current = [...clockSyncSamples.current.slice(-5), sample];
+            const bestRecentSample = clockSyncSamples.current.reduce((best, current) => current.rtt < best.rtt ? current : best);
+            clockSynchronized.current = true;
+            setServerClockOffsetMs(bestRecentSample.offset);
+          }
         }
         if (item.type === "room_deleted") { active = false; exitRoom("deleted", roomId); }
         if (item.type === "answer_count") setState(current => current ? { ...current, answered: item.payload.answered } : current);
         if (item.type === "answer_saved") { setConfirmedChoice(item.payload.choice); setIsConfirming(false); }
         if (item.type === "room_settings_saved") { setSavingRoomSettings(false); setRoomSettingsOpen(false); }
         if (item.type === "result") setResult(item.payload);
-        if (item.type === "emoji_reaction") {
-          const reaction = item.payload as ReactionEvent;
-          if (optimisticReactionIds.current.has(reaction.event_id)) optimisticReactionIds.current.delete(reaction.event_id);
-          else pushReaction(reaction);
-          if (reaction.target_player_id === player.player_id) setReactionAnnouncement(`${reaction.sender_username}さんから${reactionLabel(reaction.reaction_id)}のリアクションが届きました。`);
-        }
+        if (item.type === "emoji_reaction") reactions.receive(item.payload);
         if (item.type === "error") { setIsConfirming(false); setSavingRoomSettings(false); setMessage(apiMessage(item.payload.message, "操作を完了できませんでした。")); }
       };
       socket.onclose = event => {
         if (!active) return;
+        if (clockSyncTimer !== null) window.clearInterval(clockSyncTimer);
+        clockSyncTimer = null;
         if (event.code === 1008) {
           active = false;
           exitRoom("access-lost", roomId);
@@ -206,64 +245,21 @@ export default function RoomPage({ params }: { params: Promise<{ roomId: string 
       reconnectTimer = null;
       void connect();
     }
+    function syncWhenVisible() {
+      if (document.visibilityState === "visible" && socket?.readyState === WebSocket.OPEN) syncClock(socket);
+    }
     window.addEventListener("online", reconnectWhenOnline);
+    document.addEventListener("visibilitychange", syncWhenVisible);
     void connect();
     return () => {
       active = false;
       window.removeEventListener("online", reconnectWhenOnline);
+      document.removeEventListener("visibilitychange", syncWhenVisible);
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
+      if (clockSyncTimer !== null) window.clearInterval(clockSyncTimer);
       socket?.close();
     };
-  }, [roomId, identity, exitForJoinError, exitRoom]);
-
-  useEffect(() => {
-    if (state?.status !== "WAITING" && state?.status !== "SHOW_RESULT") {
-      setReactionTarget(null);
-      setReactionAnchor(null);
-    }
-  }, [state?.status, state?.current_question_index]);
-
-  function reactionLabel(reaction: ReactionId): string {
-    return ({ clap: "拍手", laugh: "大笑い", wow: "びっくり", like: "いいね", shy: "照れ笑い" } as const)[reaction];
-  }
-
-  function pushReaction(reaction: ReactionEvent) {
-    setReactionBursts(current => [...current.slice(-11), reaction]);
-    window.setTimeout(() => setReactionBursts(current => current.filter(item => item.event_id !== reaction.event_id)), 1600);
-  }
-
-  function openReactionPicker(target: ReactionTarget, anchor: HTMLElement) {
-    setReactionTarget(target);
-    setReactionAnchor(anchor);
-  }
-
-  function closeReactionPicker() {
-    setReactionTarget(null);
-    setReactionAnchor(null);
-  }
-
-  function sendReaction(reactionId: ReactionId) {
-    if (!reactionTarget || !identity || !state || !ws || ws.readyState !== WebSocket.OPEN) {
-      setMessage("再接続後にリアクションを送れます。");
-      closeReactionPicker();
-      return;
-    }
-    const scopeId = state.status === "WAITING" ? "waiting" : result?.question_id;
-    if (!scopeId || (state.status !== "WAITING" && state.status !== "SHOW_RESULT")) return;
-    const sentAt = Date.now();
-    if (sentAt - lastReactionSentAt.current < 800) return;
-    lastReactionSentAt.current = sentAt;
-    const eventId = crypto.randomUUID();
-    const reaction: ReactionEvent = {
-      event_id: eventId, reaction_id: reactionId, sender_id: identity.player_id, sender_username: identity.username,
-      target_player_id: reactionTarget.id, target_username: reactionTarget.username, scope_id: scopeId,
-    };
-    optimisticReactionIds.current.add(eventId);
-    pushReaction(reaction);
-    setReactionAnnouncement(`${reactionTarget.username}さんに${reactionLabel(reactionId)}のリアクションを送りました。`);
-    ws.send(JSON.stringify({ type: "emoji_reaction", payload: { event_id: eventId, reaction_id: reactionId, target_player_id: reactionTarget.id, scope_id: scopeId } }));
-    closeReactionPicker();
-  }
+  }, [roomId, identity, exitForJoinError, exitRoom, reactions.receive]);
 
   function confirmAnswer() {
     if (!state?.question || !ws || ws.readyState !== WebSocket.OPEN || !identity || !selectedChoice || selectedChoice === confirmedChoice) {
@@ -370,7 +366,8 @@ export default function RoomPage({ params }: { params: Promise<{ roomId: string 
   const board = useMemo(() => result?.leaderboard ?? [...(state?.players || [])]
     .sort((a, b) => b.score - a.score || a.username.localeCompare(b.username))
     .map((player, index) => ({ rank: index + 1, ...player })), [result, state]);
-  const remaining = secondsRemaining(state?.phase_started_at, state?.phase_duration, currentTime);
+  const clockRemaining = clockSecondsRemaining(state?.clock, currentTime + serverClockOffsetMs);
+  const remaining = state?.status === "COUNTDOWN" ? Math.max(0, clockRemaining - 1) : clockRemaining;
   const phaseProgress = state?.phase_duration ? Math.max(0, Math.min(100, (remaining / state.phase_duration) * 100)) : 0;
   const canConfirm = Boolean(selectedChoice && selectedChoice !== confirmedChoice && !isConfirming);
   const ownScore = identity && result ? result.scores[identity.player_id] ?? 0 : 0;
@@ -391,7 +388,7 @@ export default function RoomPage({ params }: { params: Promise<{ roomId: string 
     <header className="game-header"><div><span className="eyebrow">ルーム {roomId}</span><h1>{state.settings.game_name}</h1></div><div className="game-header-actions">{state.status === "WAITING" && !viewingResults && <button type="button" className="secondary room-share-button" onClick={() => { setShareMessage(""); setRoomShareOpen(true); }} aria-haspopup="dialog"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="m8.6 10.5 6.8-4M8.6 13.5l6.8 4" /></svg><span>ルームを共有</span></button>}{viewingResults && <div className="player-score"><small>最終スコア</small><strong>{identity ? displayedBoard.find(player => player.id === identity.player_id)?.score ?? 0 : 0}</strong></div>}</div></header>
     <div className="visually-hidden" aria-live="polite" aria-atomic="true">ゲーム状況：{viewingResults ? "ゲーム結果を表示中" : state.status === "WAITING" ? "プレイヤーの準備待ち" : state.status === "COUNTDOWN" ? (remaining === 0 ? "スタート" : "まもなく開始") : state.status === "QUESTION" ? `第${state.current_question_index + 1}問` : state.status === "PAUSED" ? "一時停止中" : state.status === "SHOW_RESULT" ? (isLastQuestion ? "最終結果を計算中" : "この問題の結果を表示中") : "集計中"}</div>
 
-    {state.status === "WAITING" && !viewingResults && <section className="card waiting-card"><div className="section-heading"><div><span className="step-label">プレイヤー待機中</span><h2>みんなの準備を待っています</h2><p className="muted">参加者全員が準備できたら開始できます。ほかの人のアバターを押すと、リアクションを送れます。</p></div><div className="ready-meter" aria-label={`${participants.length}人中${readyCount}人が準備完了`}><strong>{readyCount}</strong><span>/ {participants.length}</span></div></div><div className="ready-list">{state.players.map(player => { const isCurrentPlayer = player.id === identity?.player_id; return <article key={player.id} className={`${player.id === state.owner_id ? "room-owner" : player.ready ? "ready" : "not-ready"}${isCurrentPlayer ? " is-you" : ""}`} aria-label={isCurrentPlayer ? `${player.username}、自分のプレイヤーカード` : undefined}><ReactionAvatarButton target={{ id: player.id, username: player.username }} disabled={isCurrentPlayer || !player.connected} onSelect={openReactionPicker}><img width="38" height="38" src={avatarUrl(player.id)} alt="" /></ReactionAvatarButton><span>{player.id === state.owner_id ? "★ ルームオーナー" : player.ready ? "✓ 準備完了" : "○ 準備中"}</span><strong><PlayerName name={player.username} />{isCurrentPlayer && <i className="self-marker" aria-hidden="true" />}</strong>{isOwner && player.id !== state.owner_id && <button type="button" className="secondary transfer-owner" onClick={() => setPendingOwnerId(player.id)}>オーナーにする</button>}</article>; })}</div><div className="waiting-actions">{isOwner ? <button type="button" className="waiting-primary-action" onClick={startGame} disabled={!everyoneReady}>{participants.length === 0 ? "参加者を待っています" : everyoneReady ? "ゲームを開始！" : `準備待ち（${readyCount}/${participants.length}）`}</button> : <button type="button" className="ready-toggle waiting-primary-action" aria-pressed={isReady} onClick={markReady}>{isReady ? "✓ 準備完了" : "準備"}</button>}<div className="waiting-secondary-actions">{isOwner && <button type="button" className="secondary" onClick={() => void openRoomSettings()}>ルーム設定</button>}<a className="secondary admin-button" href="/">ロビーに戻る</a></div></div>{state.previous_game && <button type="button" className="secondary previous-game-button" onClick={() => setShowPreviousGame(true)}>前回のゲーム結果を見る</button>}</section>}
+    {state.status === "WAITING" && !viewingResults && <section className="card waiting-card"><div className="section-heading"><div><span className="step-label">プレイヤー待機中</span><h2>みんなの準備を待っています</h2><p className="muted">参加者全員が準備できたら開始できます。ほかの人のアバターを押すと、リアクションを送れます。</p></div><div className="ready-meter" aria-label={`${participants.length}人中${readyCount}人が準備完了`}><strong>{readyCount}</strong><span>/ {participants.length}</span></div></div><div className="ready-list">{state.players.map(player => { const isCurrentPlayer = player.id === identity?.player_id; return <article key={player.id} className={`${player.id === state.owner_id ? "room-owner" : player.ready ? "ready" : "not-ready"}${isCurrentPlayer ? " is-you" : ""}`} aria-label={isCurrentPlayer ? `${player.username}、自分のプレイヤーカード` : undefined}><ReactionAvatarButton target={{ id: player.id, username: player.username }} surfaceId="waiting" disabled={isCurrentPlayer || !player.connected} onSelect={reactions.openPicker}><img width="38" height="38" src={avatarUrl(player.id)} alt="" /></ReactionAvatarButton><span>{player.id === state.owner_id ? "★ ルームオーナー" : player.ready ? "✓ 準備完了" : "○ 準備中"}</span><strong><PlayerName name={player.username} />{isCurrentPlayer && <i className="self-marker" aria-hidden="true" />}</strong>{isOwner && player.id !== state.owner_id && <button type="button" className="secondary transfer-owner" onClick={() => setPendingOwnerId(player.id)}>オーナーにする</button>}</article>; })}</div><div className="waiting-actions">{isOwner ? <button type="button" className="waiting-primary-action" onClick={startGame} disabled={!everyoneReady}>{participants.length === 0 ? "参加者を待っています" : everyoneReady ? "ゲームを開始！" : `準備待ち（${readyCount}/${participants.length}）`}</button> : <button type="button" className="ready-toggle waiting-primary-action" aria-pressed={isReady} onClick={markReady}>{isReady ? "✓ 準備完了" : "準備"}</button>}<div className="waiting-secondary-actions">{isOwner && <button type="button" className="secondary" onClick={() => void openRoomSettings()}>ルーム設定</button>}<a className="secondary admin-button" href="/">ロビーに戻る</a></div></div>{state.previous_game && <button type="button" className="secondary previous-game-button" onClick={() => setShowPreviousGame(true)}>前回のゲーム結果を見る</button>}</section>}
 
     {state.status === "COUNTDOWN" && <section className="card phase-card countdown-card"><p className="eyebrow">第1問まであと少し</p><strong className={`phase-number${remaining === 0 ? " phase-start" : ""}`} role="timer" aria-label={remaining === 0 ? "スタート" : `残り${remaining}秒`}>{remaining === 0 ? "スタート！" : remaining}</strong><p>スマホを手に、直感で選びましょう。</p></section>}
 
@@ -409,13 +406,11 @@ export default function RoomPage({ params }: { params: Promise<{ roomId: string 
 
     {state.status === "SHOW_RESULT" && <section className="card result-card stage-card">
       <div className="row"><div><span className="step-label">{isLastQuestion ? "最終問題" : `第 ${state.current_question_index + 1} 問`}</span><h2>{isLastQuestion ? "最終結果を計算しています" : "この問題の結果"}</h2></div><strong className="timer" role="timer">{isLastQuestion ? `集計完了まであと ${remaining} 秒` : `次の問題まであと ${remaining} 秒`}</strong></div>
-      {result ? <><div className="result-reaction-heading"><h3 className="result-answer-heading">みんなの選択</h3><span>アバターを押してリアクション</span></div><div className="result-choice-groups">{(["A", "B"] as const).map(choice => { const answers = result.answers.filter(answer => answer.choice === choice); const option = choice === "A" ? result.question.option_a : result.question.option_b; return <section key={choice} className={`result-choice-group choice-group-${choice}`} aria-labelledby={`choice-${choice}-heading`}><div className="result-choice-group-heading"><span className="choice-letter" aria-hidden="true">{choice}</span><div><h4 id={`choice-${choice}-heading`}>{option}</h4><p>{answers.length}人が選択</p></div></div><div className="result-choice-players">{answers.length > 0 ? answers.map(answer => { const player = state.players.find(item => item.id === answer.player_id); const isCurrentPlayer = answer.player_id === identity?.player_id; return <article key={answer.player_id}><ReactionAvatarButton compact target={{ id: answer.player_id, username: answer.username }} disabled={isCurrentPlayer || !player?.connected} onSelect={openReactionPicker}><img width="30" height="30" src={avatarUrl(answer.player_id)} alt="" /></ReactionAvatarButton><strong><PlayerName name={answer.username} /></strong></article>; }) : <p className="muted">選んだ人はいません</p>}</div></section>; })}</div>{result.answers.some(answer => answer.choice === null) && <div className="result-unanswered"><strong>未回答</strong><span>{result.answers.filter(answer => answer.choice === null).map(answer => answer.username).join("、")}</span></div>}<p className="score-change">この問題で <strong>{ownScore >= 0 ? `+${ownScore}` : ownScore}</strong> ポイント</p></> : <p className="muted">結果を集計しています…</p>}
+      {result ? <><div className="result-reaction-heading"><h3 className="result-answer-heading">みんなの選択</h3><span>アバターを押してリアクション</span></div><div className="result-choice-groups">{(["A", "B"] as const).map(choice => { const answers = result.answers.filter(answer => answer.choice === choice); const option = choice === "A" ? result.question.option_a : result.question.option_b; return <section key={choice} className={`result-choice-group choice-group-${choice}`} aria-labelledby={`choice-${choice}-heading`}><div className="result-choice-group-heading"><span className="choice-letter" aria-hidden="true">{choice}</span><div><h4 id={`choice-${choice}-heading`}>{option}</h4><p>{answers.length}人が選択</p></div></div><div className="result-choice-players">{answers.length > 0 ? answers.map(answer => { const player = state.players.find(item => item.id === answer.player_id); const isCurrentPlayer = answer.player_id === identity?.player_id; return <article key={answer.player_id}><ReactionAvatarButton compact target={{ id: answer.player_id, username: answer.username }} surfaceId={result.question_id} disabled={isCurrentPlayer || !player?.connected} onSelect={reactions.openPicker}><img width="30" height="30" src={avatarUrl(answer.player_id)} alt="" /></ReactionAvatarButton><strong><PlayerName name={answer.username} /></strong></article>; }) : <p className="muted">選んだ人はいません</p>}</div></section>; })}</div>{result.answers.some(answer => answer.choice === null) && <div className="result-unanswered"><strong>未回答</strong><span>{result.answers.filter(answer => answer.choice === null).map(answer => answer.username).join("、")}</span></div>}<p className="score-change">この問題で <strong>{ownScore >= 0 ? `+${ownScore}` : ownScore}</strong> ポイント</p></> : <p className="muted">結果を集計しています…</p>}
     </section>}
 
     {viewingResults && <><section className="card final-summary-card"><span className="step-label">最終結果</span><h2>今夜の最終ランキング 🏆</h2><div className="podium">{displayedBoard.slice(0, 3).map((player, index) => <article key={player.id} className={`podium-place place-${index + 1}`}><span aria-hidden="true">{["🥇", "🥈", "🥉"][index]}</span><strong><PlayerName name={player.username} /></strong><small>{player.score} ポイント</small></article>)}</div><div className="final-room-actions"><p className="muted">結果を確認したら、待機画面に戻れます。</p><button type="button" className="wide" onClick={returnToRoom}>ルームに戻る</button></div></section><details className="card leaderboard-card"><summary><span><span className="step-label">ランキング</span><strong>全員の順位を見る</strong></span><span className="leaderboard-summary-count">{displayedBoard.length}人</span></summary><ol className="leaderboard">{displayedBoard.map(player => { const isCurrentPlayer = player.id === identity?.player_id; return <li key={player.id} className={isCurrentPlayer ? "is-you" : ""} aria-label={isCurrentPlayer ? `${player.rank}位、${player.username}、自分、${player.score}ポイント` : undefined}><span><b>{player.rank}</b><PlayerName name={player.username} />{isCurrentPlayer && <i className="self-marker" aria-hidden="true" />}</span><strong>{player.score}<small> ポイント</small></strong></li>; })}</ol></details><section className="card review-card"><h2>回答を振り返る</h2><p className="muted">各問題で全員が最後に選んだ回答を確認できます。</p>{displayedReview.map((review, index) => <details key={review.question.id} open={index === 0}><summary>第 {index + 1} 問：{review.question.title}<span>A {review.counts.A} · B {review.counts.B}</span></summary><div className="review-options"><span>A · {review.question.option_a}</span><span>B · {review.question.option_b}</span></div><div className="review-answers">{review.answers.map(answer => <article key={answer.player_id}><img width="30" height="30" loading="lazy" src={avatarUrl(answer.player_id)} alt="" /><strong><PlayerName name={answer.username} /></strong><span className={`review-choice choice-${answer.choice || "none"}`}>{answer.choice ? `${answer.choice} · ${answer.choice === "A" ? review.question.option_a : review.question.option_b}` : "未回答"}</span></article>)}</div></details>)}</section></>}
-    <div className="visually-hidden" aria-live="polite">{reactionAnnouncement}</div>
-    <ReactionPicker target={reactionTarget} anchor={reactionAnchor} onClose={closeReactionPicker} onSend={sendReaction} />
-    <ReactionAnimationLayer events={reactionBursts} />
+    <RoomReactionSurface reactions={reactions} />
     {message && <p className="error floating-message" role="alert">{message}</p>}
     {roomShareOpen && <BottomSheet open onClose={() => setRoomShareOpen(false)} labelledBy="room-share-title" describedBy="room-share-summary" header={<><span className="step-label">ルーム {roomId}</span><h2 id="room-share-title">このルームに招待</h2><p id="room-share-summary" className="muted">QRコードを読み取るか、URLを送って参加してもらいましょう。</p></>}>
       <div className="room-share-content">

@@ -21,20 +21,33 @@ def test_game_progresses_from_countdown_to_result_to_finished() -> None:
         await manager.mark_ready(room.id, "bob")
         await manager.start(room.id, "alice")
         assert room.status == GameStatus.COUNTDOWN
+        assert room.clock_version == 1
         assert room.snapshot()["phase_duration"] == 3
+        assert room.snapshot()["clock"]["server_time"].endswith("+00:00")
+        assert room.snapshot()["clock"]["phase"] == GameStatus.COUNTDOWN
+        assert room.snapshot()["clock"]["duration_ms"] == 4000
+        assert room.snapshot()["clock"]["running"] is True
 
         await manager.pause(room.id)
         assert room.status == GameStatus.PAUSED
+        assert room.clock_version == 2
+        paused_clock = room.snapshot()["clock"]
+        assert paused_clock["running"] is False
+        assert paused_clock["ends_at"] is None
+        assert paused_clock["remaining_ms"] > 0
         await manager.resume(room.id)
         assert room.status == GameStatus.COUNTDOWN
+        assert room.clock_version == 3
 
         await manager.begin_question(room)
         assert room.status == GameStatus.QUESTION
+        assert room.clock_version == 4
         await manager.answer(room.id, "alice", "only", "A")
         await manager.select_answer(room.id, "alice", "only", "B")
         await manager.answer(room.id, "bob", "only", "A")
         result = await manager.lock_and_score(room)
         assert room.status == GameStatus.SHOW_RESULT
+        assert room.clock_version == 5
         assert result["counts"] == {"A": 1, "B": 1}
         assert result["question"] == {"id": "only", "title": "A or B?", "option_a": "A", "option_b": "B"}
         assert result["answers"] == [{"player_id": "alice", "username": "Alice", "choice": "B"}, {"player_id": "bob", "username": "Bob", "choice": "A"}]
@@ -45,6 +58,7 @@ def test_game_progresses_from_countdown_to_result_to_finished() -> None:
 
         await manager.next(room.id)
         assert room.status == GameStatus.FINISHED
+        assert room.clock_version == 6
         assert room.snapshot()["review"] == room.history
 
         await manager.reset(room.id)

@@ -29,6 +29,14 @@ def test_websocket_disconnect_during_game_preserves_player_for_reconnect() -> No
                 connected_state = socket.receive_json()
                 assert connected_state["type"] == "game_state"
                 assert connected_state["payload"]["status"] == "QUESTION"
+                assert "clock" in connected_state["payload"]
+                assert "server_time" in connected_state["payload"]["clock"]
+
+                socket.send_json({"type": "time_sync", "payload": {"client_sent_at": 123456789}})
+                time_sync = socket.receive_json()
+                assert time_sync["type"] == "time_sync"
+                assert time_sync["payload"]["client_sent_at"] == 123456789
+                assert time_sync["payload"]["server_time"].endswith("+00:00")
 
             assert owner.id in room.players
             assert room.players[owner.id].connected is False

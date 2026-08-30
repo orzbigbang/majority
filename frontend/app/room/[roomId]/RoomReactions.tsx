@@ -1,16 +1,22 @@
 "use client";
 
-import { CSSProperties, ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { CSSProperties, ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
-export const REACTIONS = [
-  { id: "clap", label: "拍手" },
-  { id: "laugh", label: "大笑い" },
-  { id: "wow", label: "びっくり" },
-  { id: "like", label: "いいね" },
-  { id: "shy", label: "照れ笑い" },
-] as const;
+export const REACTION_REGISTRY = {
+  clap: { label: "拍手" },
+  laugh: { label: "大笑い" },
+  wow: { label: "びっくり" },
+  like: { label: "いいね" },
+  shy: { label: "照れ笑い" },
+} as const;
 
-export type ReactionId = (typeof REACTIONS)[number]["id"];
+export type ReactionId = keyof typeof REACTION_REGISTRY;
+export const REACTIONS = (Object.entries(REACTION_REGISTRY) as [ReactionId, (typeof REACTION_REGISTRY)[ReactionId]][])
+  .map(([id, definition]) => ({ id, ...definition }));
+
+export function reactionLabel(reaction: ReactionId): string {
+  return REACTION_REGISTRY[reaction].label;
+}
 export type ReactionTarget = { id: string; username: string };
 export type ReactionEvent = {
   event_id: string;
@@ -23,16 +29,126 @@ export type ReactionEvent = {
 };
 
 type Point = { x: number; y: number };
+type ReactionIdentity = { player_id: string; username: string };
+const reactionAnchors = new Map<string, Map<HTMLElement, string>>();
 
-export function ReactionAvatarButton({ target, disabled = false, compact = false, onSelect, children }: {
+function registerReactionAnchor(playerId: string, surfaceId: string, element: HTMLElement) {
+  const playerAnchors = reactionAnchors.get(playerId) || new Map<HTMLElement, string>();
+  playerAnchors.set(element, surfaceId);
+  reactionAnchors.set(playerId, playerAnchors);
+}
+
+function unregisterReactionAnchor(playerId: string, element: HTMLElement) {
+  const playerAnchors = reactionAnchors.get(playerId);
+  if (!playerAnchors) return;
+  playerAnchors.delete(element);
+  if (playerAnchors.size === 0) reactionAnchors.delete(playerId);
+}
+
+function findReactionAnchor(playerId: string, preferredSurfaceId: string): HTMLElement | null {
+  const playerAnchors = reactionAnchors.get(playerId);
+  if (!playerAnchors) return null;
+  const connected = [...playerAnchors.entries()].filter(([element]) => {
+    if (element.isConnected) return true;
+    playerAnchors.delete(element);
+    return false;
+  });
+  if (playerAnchors.size === 0) reactionAnchors.delete(playerId);
+  const preferred = connected.filter(([, surfaceId]) => surfaceId === preferredSurfaceId);
+  const candidates = preferred.length > 0 ? preferred : connected;
+  const centerX = window.innerWidth / 2;
+  const centerY = window.innerHeight / 2;
+  return candidates
+    .map(([element]) => {
+      const rect = element.getBoundingClientRect();
+      const visible = rect.width > 0 && rect.height > 0 && rect.right > 0 && rect.bottom > 0 && rect.left < window.innerWidth && rect.top < window.innerHeight;
+      const distance = Math.hypot(rect.left + rect.width / 2 - centerX, rect.top + rect.height / 2 - centerY);
+      return { element, score: distance + (visible ? 0 : 1_000_000) };
+    })
+    .sort((a, b) => a.score - b.score)[0]?.element || null;
+}
+
+export function useRoomReactions({ ws, identity, status, scopeId, onError }: {
+  ws: WebSocket | null;
+  identity: ReactionIdentity | null;
+  status?: string;
+  scopeId?: string | null;
+  onError: (message: string) => void;
+}) {
+  const [target, setTarget] = useState<ReactionTarget | null>(null);
+  const [anchor, setAnchor] = useState<HTMLElement | null>(null);
+  const [events, setEvents] = useState<ReactionEvent[]>([]);
+  const [announcement, setAnnouncement] = useState("");
+  const lastSentAt = useRef(0);
+
+  const push = useCallback((reaction: ReactionEvent) => {
+    setEvents(current => [...current.slice(-11), reaction]);
+    window.setTimeout(() => setEvents(current => current.filter(item => item.event_id !== reaction.event_id)), 1600);
+  }, []);
+
+  const receive = useCallback((reaction: ReactionEvent) => {
+    push(reaction);
+    if (reaction.target_player_id === identity?.player_id) {
+      setAnnouncement(`${reaction.sender_username}さんから${reactionLabel(reaction.reaction_id)}のリアクションが届きました。`);
+    } else if (reaction.sender_id === identity?.player_id) {
+      setAnnouncement(`${reaction.target_username}さんに${reactionLabel(reaction.reaction_id)}のリアクションを送りました。`);
+    }
+  }, [identity?.player_id, push]);
+
+  const openPicker = useCallback((nextTarget: ReactionTarget, nextAnchor: HTMLElement) => {
+    setTarget(nextTarget);
+    setAnchor(nextAnchor);
+  }, []);
+
+  const closePicker = useCallback(() => {
+    setTarget(null);
+    setAnchor(null);
+  }, []);
+
+  const send = useCallback((reactionId: ReactionId) => {
+    if (!target || !identity || !ws || ws.readyState !== WebSocket.OPEN) {
+      onError("再接続後にリアクションを送れます。");
+      closePicker();
+      return;
+    }
+    if (!scopeId || (status !== "WAITING" && status !== "SHOW_RESULT")) return;
+    const sentAt = Date.now();
+    if (sentAt - lastSentAt.current < 800) return;
+    lastSentAt.current = sentAt;
+    ws.send(JSON.stringify({ type: "emoji_reaction", payload: { reaction_id: reactionId, target_player_id: target.id, scope_id: scopeId } }));
+    closePicker();
+  }, [target, identity, ws, scopeId, status, onError, closePicker]);
+
+  useEffect(() => {
+    if (status !== "WAITING" && status !== "SHOW_RESULT") closePicker();
+  }, [status, closePicker]);
+
+  return { target, anchor, events, announcement, receive, openPicker, closePicker, send };
+}
+
+export type RoomReactionsController = ReturnType<typeof useRoomReactions>;
+
+export function ReactionAvatarButton({ target, disabled = false, compact = false, surfaceId = "default", onSelect, children }: {
   target: ReactionTarget;
   disabled?: boolean;
   compact?: boolean;
+  surfaceId?: string;
   onSelect: (target: ReactionTarget, anchor: HTMLElement) => void;
   children: ReactNode;
 }) {
-  if (disabled) return <span className={`reaction-avatar-static${compact ? " compact" : ""}`}>{children}</span>;
+  const currentAnchor = useRef<HTMLElement | null>(null);
+  const attachAnchor = useCallback((element: HTMLElement | null) => {
+    if (currentAnchor.current) unregisterReactionAnchor(target.id, currentAnchor.current);
+    currentAnchor.current = element;
+    if (element) registerReactionAnchor(target.id, surfaceId, element);
+  }, [target.id, surfaceId]);
+  useEffect(() => () => {
+    if (currentAnchor.current) unregisterReactionAnchor(target.id, currentAnchor.current);
+  }, [target.id]);
+
+  if (disabled) return <span ref={attachAnchor} className={`reaction-avatar-static${compact ? " compact" : ""}`} data-reaction-player-id={target.id}>{children}</span>;
   return <button
+    ref={attachAnchor}
     type="button"
     className={`reaction-avatar-trigger${compact ? " compact" : ""}`}
     data-reaction-player-id={target.id}
@@ -124,9 +240,8 @@ function ReactionBurst({ event, index }: { event: ReactionEvent; index: number }
   const [target, setTarget] = useState<Point | null>(null);
   const [source, setSource] = useState<Point | null>(null);
   useLayoutEffect(() => {
-    const buttons = [...document.querySelectorAll<HTMLElement>("[data-reaction-player-id]")];
-    const targetElement = buttons.find(item => item.dataset.reactionPlayerId === event.target_player_id);
-    const sourceElement = buttons.find(item => item.dataset.reactionPlayerId === event.sender_id);
+    const targetElement = findReactionAnchor(event.target_player_id, event.scope_id);
+    const sourceElement = findReactionAnchor(event.sender_id, event.scope_id);
     if (!targetElement) return;
     const targetRect = targetElement.getBoundingClientRect();
     const sourceRect = sourceElement?.getBoundingClientRect();
@@ -149,4 +264,12 @@ function ReactionBurst({ event, index }: { event: ReactionEvent; index: number }
 
 export function ReactionAnimationLayer({ events }: { events: ReactionEvent[] }) {
   return <div className="reaction-animation-layer" aria-hidden="true">{events.map((event, index) => <ReactionBurst key={event.event_id} event={event} index={index} />)}</div>;
+}
+
+export function RoomReactionSurface({ reactions }: { reactions: RoomReactionsController }) {
+  return <>
+    <div className="visually-hidden" aria-live="polite">{reactions.announcement}</div>
+    <ReactionPicker target={reactions.target} anchor={reactions.anchor} onClose={reactions.closePicker} onSend={reactions.send} />
+    <ReactionAnimationLayer events={reactions.events} />
+  </>;
 }

@@ -58,10 +58,13 @@ with sync_playwright() as playwright:
     waiting_picker = os.path.join(tempfile.gettempdir(), "majority-reaction-waiting-picker.png")
     owner.screenshot(path=waiting_picker, full_page=True)
     owner.get_by_role("button", name="拍手").click()
+    guest.locator(".reaction-flight").wait_for(timeout=3_000)
     owner.wait_for_timeout(520)
     assert owner.locator(".reaction-flight").count() > 0
     waiting_burst = os.path.join(tempfile.gettempdir(), "majority-reaction-waiting-burst.png")
     owner.screenshot(path=waiting_burst, full_page=True)
+    received_burst = os.path.join(tempfile.gettempdir(), "majority-reaction-received-burst.png")
+    guest.screenshot(path=received_burst, full_page=True)
 
     owner.locator(".waiting-primary-action").wait_for(state="visible")
     owner.locator(".waiting-primary-action").click()
@@ -83,12 +86,13 @@ with sync_playwright() as playwright:
     result_picker = os.path.join(tempfile.gettempdir(), "majority-reaction-result-picker.png")
     owner.screenshot(path=result_picker, full_page=True)
     owner.get_by_role("button", name="照れ笑い").click()
+    guest.locator(".reaction-flight").wait_for(timeout=3_000)
     owner.wait_for_timeout(520)
     result_burst = os.path.join(tempfile.gettempdir(), "majority-reaction-result-burst.png")
     owner.screenshot(path=result_burst, full_page=True)
 
     assert not errors, errors
-    print(json.dumps({"room": room_id, "screenshots": [mobile_picker, waiting_picker, waiting_burst, result_picker, result_burst]}, ensure_ascii=False))
+    print(json.dumps({"room": room_id, "screenshots": [mobile_picker, waiting_picker, waiting_burst, received_burst, result_picker, result_burst]}, ensure_ascii=False))
     api.dispose()
     owner_context.close()
     guest_context.close()
