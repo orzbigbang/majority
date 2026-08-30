@@ -100,7 +100,7 @@ export WS_URL="${API_URL/https:/wss:}"
 
 此后推送到 `master` 会自动创建 Production Deployment；推送到其他分支或创建 Pull Request 会自动创建独立的 Preview Deployment。`NEXT_PUBLIC_*` 会在构建时写入浏览器代码，因此 API 地址变化后需要在 Vercel 更新变量并重新部署。
 
-本地 `npm run dev` 使用 `.next`，本地 `npm run build` 使用 `.next-build`，两者不会互相覆盖。Vercel 会通过 Next.js 集成处理构建产物，无需提交这两个目录。
+Next.js 开发和生产构建均使用默认的 `.next` 输出目录，Vercel 会通过 Next.js 集成处理该构建产物，无需提交该目录。
 
 ### 3. 收紧 API 的 CORS
 
