@@ -1,6 +1,6 @@
 # Local Firestore and Cloud Storage
 
-`docker compose up --build` starts a Firestore Emulator at `localhost:8081` and connects the API to it using `FIRESTORE_EMULATOR_HOST`.
+`docker compose up --build` starts the API, a Firestore Emulator at `localhost:8081`, and a local Storage emulator. The frontend runs separately on the host with `npm run dev` so Next.js hot reload remains available.
 
 The emulator data is stored in the named Docker volume `firestore-data`. On a graceful Compose shutdown it is exported and automatically imported the next time it starts. To reset only the local Firestore data, run:
 

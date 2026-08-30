@@ -4,7 +4,7 @@ import os
 
 from google.cloud import firestore
 
-from ..models import GameSettings, Question, UserProfile
+from ..models import GameHistoryRecord, GameSettings, Question, UserProfile
 
 
 class FirestoreGameRepository:
@@ -50,4 +50,14 @@ class FirestoreGameRepository:
         )
 
     def delete_user(self, user_id: str) -> None:
-        self.client.collection("users").document(user_id).delete()
+        document = self.client.collection("users").document(user_id)
+        for history in document.collection("game_history").stream():
+            history.reference.delete()
+        document.delete()
+
+    def save_game_history(self, user_id: str, record: GameHistoryRecord) -> None:
+        self.client.collection("users").document(user_id).collection("game_history").document(record.id).set(record.model_dump(exclude={"id"}))
+
+    def list_game_history(self, user_id: str) -> list[GameHistoryRecord]:
+        documents = self.client.collection("users").document(user_id).collection("game_history").order_by("finished_at", direction=firestore.Query.DESCENDING).stream()
+        return [GameHistoryRecord.model_validate({**(document.to_dict() or {}), "id": document.id}) for document in documents]
