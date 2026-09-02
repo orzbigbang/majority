@@ -1,0 +1,12 @@
+{
+  "/_not-found/page": "/_not-found",
+  "/admin/questions/page": "/admin/questions",
+  "/admin/page": "/admin",
+  "/admin/settings/page": "/admin/settings",
+  "/admin/rooms/page": "/admin/rooms",
+  "/admin/users/page": "/admin/users",
+  "/page": "/",
+  "/profile/page": "/profile",
+  "/room/page": "/room",
+  "/room/[roomId]/page": "/room/[roomId]"
+}

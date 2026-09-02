@@ -236,6 +236,9 @@ async def lifespan(_: FastAPI):
                     elif room.status == GameStatus.SELECTING:
                         changed = await manager.auto_choose_question(room)
                         await broadcast(changed.id, "game_state", changed.snapshot())
+                    elif room.status == GameStatus.PARENT_ANSWERING:
+                        changed = await manager.auto_answer_parent(room)
+                        await broadcast(changed.id, "game_state", changed.snapshot())
                     elif room.status == GameStatus.QUESTION:
                         result = await manager.lock_and_score(room)
                         changed = manager.room(room.id)
@@ -435,7 +438,7 @@ def room_options() -> dict:
         "available_question_count": available_question_count,
         "defaults": {
             "max_players": manager.settings.max_players,
-            "round_count": 1,
+            "round_count": manager.settings.default_round_count,
             "selection_duration": min(60, max(5, round(manager.settings.selection_duration / 5) * 5)),
             "question_duration": min(60, max(10, round(manager.settings.question_duration / 10) * 10)),
             "between_question_duration": min(30, max(5, round(manager.settings.result_duration / 5) * 5)),
@@ -695,6 +698,7 @@ async def websocket(ws: WebSocket, room_id: str) -> None:
                         settings.selection_duration,
                         settings.question_duration,
                         settings.between_question_duration,
+                        settings.title,
                     )
                     await send_message(ws, "room_settings_saved", {"ok": True})
                     await broadcast(room.id, "game_state", changed.snapshot())

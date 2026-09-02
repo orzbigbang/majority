@@ -55,6 +55,62 @@ const statusLabels: Record<string, string> = {
   FINISHED: "終了",
 };
 
+export type GameRuleSpec = {
+  initial_score: number;
+  majority_reward: number;
+  minority_penalty: number;
+  score_floor: number;
+  tie_breaker: string;
+  parent_collects_from_minority: boolean;
+  parent_collects_when_minority_has_zero: boolean;
+  minority_parent_pays_to_table: boolean;
+};
+
+export const defaultGameRuleSpec: GameRuleSpec = {
+  initial_score: 1,
+  majority_reward: 1,
+  minority_penalty: 1,
+  score_floor: 0,
+  tie_breaker: "parent_choice",
+  parent_collects_from_minority: true,
+  parent_collects_when_minority_has_zero: true,
+  minority_parent_pays_to_table: true,
+};
+
+export const gameRulesCopy = {
+  closeLabel: "ルールを閉じる",
+  eyebrow: "HOW TO PLAY",
+  title: "遊び方は3つだけ",
+  summary: "選ぶ、押す、多数派になる。",
+  choices: {
+    yes: "押す",
+    no: "押さない",
+  },
+  conjunction: "しかし",
+  steps: [
+    {
+      title: "親が問題を選ぶ",
+      description: "「しかし」の前後を読んで、迷いそうな一問を選びます。",
+    },
+    {
+      title: "それぞれ答えを選ぶ",
+      description: "「押す」か「押さない」かを各自で選び、回答を確定します。",
+    },
+    {
+      title: (rules: GameRuleSpec) => `多数派は＋${rules.majority_reward}ポイント`,
+      description: (rules: GameRuleSpec) => [
+        `全員${rules.initial_score}点から開始。少数派は−${rules.minority_penalty}`,
+        rules.parent_collects_from_minority ? "、親は少数派1人につき同じ点数を獲得" : "",
+        rules.parent_collects_from_minority && rules.parent_collects_when_minority_has_zero ? "（少数派が0点でも獲得）" : "",
+        "。",
+        rules.minority_parent_pays_to_table ? `親自身が少数派なら−${rules.minority_penalty}は場へ。` : "",
+        `${rules.score_floor}未満にはなりません。`,
+      ].join(""),
+    },
+  ],
+  loop: (rules: GameRuleSpec) => `${rules.tie_breaker === "parent_choice" ? "同数なら親側が多数派。" : ""}親を交代し、最後に最高得点の人が勝ち！`,
+} as const;
+
 export function apiMessage(value: unknown, fallback: string): string {
   return typeof value === "string" ? apiMessages[value] || fallback : fallback;
 }

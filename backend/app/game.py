@@ -12,6 +12,7 @@ from fastapi import HTTPException
 from .models import Answer, GameSettings, GameStatus, Player, Question, RoomState, now
 from .question_bank import default_questions
 from .repository.base import GameRepository, RoomConflictError
+from .rules import MAJORITY_PARTY_RULES, MajorityPartyRules, RoundInput
 
 COUNTDOWN_START_CUE_DURATION = 1
 QUESTION_OPTION_COUNT = 3
@@ -46,8 +47,9 @@ def retry_room_conflicts(operation):
 
 
 class Room:
-    def __init__(self, room_id: str, questions: list[Question], settings: GameSettings, round_count: int = 1) -> None:
+    def __init__(self, room_id: str, questions: list[Question], settings: GameSettings, round_count: int = 1, rule_spec: dict | None = None, title: str | None = None) -> None:
         self.id, self.questions, self.settings = room_id, questions, settings
+        self.title = title
         self.round_count = round_count
         self.status = GameStatus.WAITING
         self.players: dict[str, Player] = {}
@@ -60,6 +62,7 @@ class Room:
         self.selection_question_ids: list[str] = []
         self.used_question_ids: list[str] = []
         self.selection_started_at = None
+        self.parent_answer_started_at = None
         self.parent_disconnected_at = None
         self.current_question_index = 0
         self.question_started_at = None
@@ -75,17 +78,19 @@ class Room:
         self.version = 0
         self.created_at = now()
         self.updated_at = self.created_at
+        self.rule_spec = rule_spec or MAJORITY_PARTY_RULES.spec.as_dict()
         self.lock = asyncio.Lock()
 
     @classmethod
-    def from_state(cls, state: RoomState) -> Room:
-        room = cls(state.id, [question.model_copy(deep=True) for question in state.questions], state.settings.model_copy(deep=True), state.round_count)
+    def from_state(cls, state: RoomState, rule_spec: dict | None = None) -> Room:
+        room = cls(state.id, [question.model_copy(deep=True) for question in state.questions], state.settings.model_copy(deep=True), state.round_count, rule_spec, state.title)
         room.apply_state(state)
         return room
 
     def apply_state(self, state: RoomState) -> None:
         local_sessions = {player.id: player.session_id for player in self.players.values() if player.session_id}
         self.questions = [question.model_copy(deep=True) for question in state.questions]
+        self.title = state.title
         self.settings = state.settings.model_copy(deep=True)
         self.status = state.status
         self.players = {}
@@ -105,6 +110,7 @@ class Room:
         self.selection_question_ids = list(state.selection_question_ids)
         self.used_question_ids = list(state.used_question_ids)
         self.selection_started_at = state.selection_started_at
+        self.parent_answer_started_at = state.parent_answer_started_at
         self.parent_disconnected_at = state.parent_disconnected_at
         self.current_question_index = state.current_question_index
         self.question_started_at = state.question_started_at
@@ -124,6 +130,7 @@ class Room:
     def to_state(self) -> RoomState:
         return RoomState(
             id=self.id,
+            title=self.title,
             questions=[question.model_copy(deep=True) for question in self.questions],
             settings=self.settings.model_copy(deep=True),
             status=self.status,
@@ -147,6 +154,7 @@ class Room:
             selection_question_ids=list(self.selection_question_ids),
             used_question_ids=list(self.used_question_ids),
             selection_started_at=self.selection_started_at,
+            parent_answer_started_at=self.parent_answer_started_at,
             parent_disconnected_at=self.parent_disconnected_at,
             current_question_index=self.current_question_index,
             question_started_at=self.question_started_at,
@@ -195,6 +203,8 @@ class Room:
             clock_started_at, clock_duration = self.countdown_started_at, self.settings.countdown_duration + COUNTDOWN_START_CUE_DURATION
         elif clock_phase == GameStatus.SELECTING:
             clock_started_at, clock_duration = self.selection_started_at, self.settings.selection_duration
+        elif clock_phase == GameStatus.PARENT_ANSWERING:
+            clock_started_at, clock_duration = self.parent_answer_started_at, self.settings.question_duration
         elif clock_phase == GameStatus.QUESTION:
             clock_started_at, clock_duration = self.question_started_at, self.settings.question_duration
         elif clock_phase == GameStatus.SHOW_RESULT:
@@ -223,6 +233,8 @@ class Room:
             deadlines.append(self.countdown_started_at + timedelta(seconds=self.settings.countdown_duration + COUNTDOWN_START_CUE_DURATION))
         if self.status == GameStatus.SELECTING and self.selection_started_at and (not current_parent or current_parent.connected):
             deadlines.append(self.selection_started_at + timedelta(seconds=self.settings.selection_duration))
+        if self.status == GameStatus.PARENT_ANSWERING and self.parent_answer_started_at and (not current_parent or current_parent.connected):
+            deadlines.append(self.parent_answer_started_at + timedelta(seconds=self.settings.question_duration))
         if self.status in {GameStatus.SELECTING, GameStatus.PARENT_ANSWERING} and self.parent_disconnected_at:
             deadlines.append(self.parent_disconnected_at + timedelta(seconds=PARENT_DISCONNECT_GRACE_SECONDS))
         if self.status == GameStatus.QUESTION and self.question_started_at:
@@ -235,13 +247,15 @@ class Room:
         question = self.current_question
         current_parent_id = self.current_parent_id
         current_round = min(self.round_count, self.parent_turn_order[:self.current_question_index + 1].count(current_parent_id)) if current_parent_id and self.parent_turn_order else (min(self.round_count, self.current_question_index // len(self.parent_order) + 1) if self.parent_order else 1)
-        payload = {"room_id": self.id, "status": self.status, "owner_id": self.owner_id, "players": [{"id": p.id, "username": p.username, "score": p.score, "connected": p.connected, "ready": p.ready} for p in self.players.values()], "current_question_index": self.current_question_index, "question_count": self.total_turns, "round_count": self.round_count, "current_round": current_round, "current_parent_id": self.current_parent_id, "answered": len(self.draft_answers), "settings": self.settings.model_dump(), "previous_game": self.previous_game, "clock": self.clock_metadata()}
+        payload = {"room_id": self.id, "title": self.title, "status": self.status, "owner_id": self.owner_id, "players": [{"id": p.id, "username": p.username, "score": p.score, "connected": p.connected, "ready": p.ready} for p in self.players.values()], "current_question_index": self.current_question_index, "question_count": self.total_turns, "round_count": self.round_count, "current_round": current_round, "current_parent_id": self.current_parent_id, "answered": len(self.draft_answers), "settings": self.settings.model_dump(), "rules": self.rule_spec, "previous_game": self.previous_game, "clock": self.clock_metadata()}
         if self.status == GameStatus.COUNTDOWN:
             payload.update({"phase_started_at": self.countdown_started_at.isoformat() if self.countdown_started_at else None, "phase_duration": self.settings.countdown_duration})
         if self.status == GameStatus.SELECTING:
             questions_by_id = {item.id: item for item in self.questions}
             payload["question_options"] = [{"id": questions_by_id[item_id].id, "title": questions_by_id[item_id].title} for item_id in self.selection_question_ids if item_id in questions_by_id]
             payload.update({"phase_started_at": self.selection_started_at.isoformat() if self.selection_started_at else None, "phase_duration": self.settings.selection_duration})
+        if self.status == GameStatus.PARENT_ANSWERING:
+            payload.update({"phase_started_at": self.parent_answer_started_at.isoformat() if self.parent_answer_started_at else None, "phase_duration": self.settings.question_duration})
         if include_question and question and (self.status in {GameStatus.PARENT_ANSWERING, GameStatus.QUESTION} or (self.status == GameStatus.PAUSED and self.paused_status == GameStatus.QUESTION)):
             payload["question"] = {"id": question.id, "title": question.title, "option_a": question.option_a, "option_b": question.option_b, "duration": self.settings.question_duration, "started_at": self.question_started_at.isoformat() if self.question_started_at else None}
             if self.status == GameStatus.QUESTION:
@@ -256,9 +270,10 @@ class Room:
 
 
 class GameManager:
-    def __init__(self, repository: GameRepository | None = None) -> None:
+    def __init__(self, repository: GameRepository | None = None, rules: MajorityPartyRules | None = None) -> None:
         self.rooms: dict[str, Room] = {}
         self.repository = repository
+        self.rules = rules or MAJORITY_PARTY_RULES
         self.clock_changed = asyncio.Event()
         self.questions: list[Question] = default_questions()
         self.settings = GameSettings()
@@ -296,6 +311,7 @@ class GameManager:
             room.used_question_ids.append(question_id)
         room.selection_question_ids.clear()
         room.selection_started_at = None
+        room.parent_answer_started_at = now()
         room.parent_disconnected_at = None
         room.answers.clear()
         room.draft_answers.clear()
@@ -343,14 +359,14 @@ class GameManager:
         else:
             repository.save_settings(self.settings)
         for state in repository.list_rooms():
-            self.rooms[state.id] = Room.from_state(state)
+            self.rooms[state.id] = Room.from_state(state, self.rules.spec.as_dict())
 
     def _cache_state(self, state: RoomState) -> Room:
         room = self.rooms.get(state.id)
         if room:
             room.apply_state(state)
         else:
-            room = Room.from_state(state)
+            room = Room.from_state(state, self.rules.spec.as_dict())
             self.rooms[state.id] = room
         return room
 
@@ -398,16 +414,18 @@ class GameManager:
             self.clock_changed.set()
         return changed
 
-    def create_room(self, settings: GameSettings | None = None, round_count: int = 1) -> Room:
+    def create_room(self, settings: GameSettings | None = None, round_count: int | None = None, title: str | None = None) -> Room:
         if not self.questions:
             raise HTTPException(400, "Add at least one question first")
         ordered_questions = sorted([q.model_copy() for q in self.questions], key=lambda q: q.order)
+        room_settings = (settings or self.settings).model_copy()
+        room_round_count = round_count if round_count is not None else room_settings.default_round_count
         alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
         for _ in range(20):
             room_id = "".join(secrets.choice(alphabet) for _ in range(4))
             if room_id in self.rooms or (self.repository and self.repository.get_room(room_id)):
                 continue
-            room = Room(room_id, ordered_questions, (settings or self.settings).model_copy(), round_count)
+            room = Room(room_id, ordered_questions, room_settings, room_round_count, self.rules.spec.as_dict(), title)
             self.rooms[room_id] = room
             try:
                 return self._persist_room(room, create=True)
@@ -466,6 +484,7 @@ class GameManager:
         return [
             {
                 "room_id": room.id,
+                "title": room.title,
                 "status": room.status,
                 "player_count": len(room.players),
                 "max_players": room.settings.max_players,
@@ -499,6 +518,7 @@ class GameManager:
         selection_duration: int,
         question_duration: int,
         between_question_duration: int,
+        title: str | None = None,
     ) -> Room:
         room = self.room(room_id)
         async with room.lock:
@@ -510,6 +530,7 @@ class GameManager:
                 raise HTTPException(409, "MAX_PLAYERS_BELOW_CURRENT_PLAYERS")
             ordered_questions = sorted([question.model_copy() for question in self.questions], key=lambda question: question.order)
             room.questions = ordered_questions
+            room.title = title
             room.round_count = round_count
             room.settings.max_players = max_players
             room.settings.selection_duration = selection_duration
@@ -552,8 +573,9 @@ class GameManager:
             room.draft_answers.clear()
             room.last_result = None
             room.history.clear()
+            starting_scores = self.rules.starting_scores(list(room.players))
             for player in room.players.values():
-                player.score = 1
+                player.score = starting_scores[player.id]
                 player.answer_time_ms = 0
             if room.settings.countdown_duration:
                 room.status, room.countdown_started_at = GameStatus.COUNTDOWN, now()
@@ -709,6 +731,7 @@ class GameManager:
             room.draft_answers.clear()
             room.last_result = None
             room.question_started_at = None
+            room.parent_answer_started_at = None
             self._prepare_selection(room)
             await self._persist_room_async(room)
             return room
@@ -775,6 +798,7 @@ class GameManager:
             room.answers.clear()
             room.draft_answers.clear()
             room.question_started_at = None
+            room.parent_answer_started_at = None
             room.countdown_started_at = None
             room.result_started_at = None
             room.last_result = None
@@ -825,6 +849,7 @@ class GameManager:
             room.answers[player_id] = answer
             if room.status == GameStatus.PARENT_ANSWERING:
                 room.status = GameStatus.QUESTION
+                room.parent_answer_started_at = None
                 room.question_started_at = now()
                 self._advance_clock(room)
             await self._persist_room_async(room)
@@ -836,6 +861,8 @@ class GameManager:
             raise HTTPException(409, "INVALID_ANSWER")
         if room.status == GameStatus.PARENT_ANSWERING and player_id != room.current_parent_id:
             raise HTTPException(403, "PARENT_ANSWERS_FIRST")
+        if room.status == GameStatus.PARENT_ANSWERING and room.parent_answer_started_at and now() >= room.parent_answer_started_at + timedelta(seconds=room.settings.question_duration):
+            raise HTTPException(409, "PARENT_ANSWER_EXPIRED")
         if room.status == GameStatus.QUESTION and player_id == room.current_parent_id and player_id in room.answers:
             raise HTTPException(409, "PARENT_ANSWER_LOCKED")
         if room.question_started_at and now() > room.question_started_at + timedelta(seconds=room.settings.question_duration):
@@ -843,6 +870,27 @@ class GameManager:
         if player_id not in room.players:
             raise HTTPException(401, "INVALID_SESSION")
         return Answer(player_id=player_id, question_id=question_id, choice=choice)
+
+    @retry_room_conflicts
+    async def auto_answer_parent(self, room: Room) -> Room:
+        room = self.room(room.id)
+        async with room.lock:
+            if room.status != GameStatus.PARENT_ANSWERING or not room.current_question or not room.current_parent_id:
+                raise HTTPException(409, "PARENT_ANSWER_NOT_ACTIVE")
+            parent_id = room.current_parent_id
+            answer = room.draft_answers.get(parent_id) or Answer(
+                player_id=parent_id,
+                question_id=room.current_question.id,
+                choice=secrets.choice(("A", "B")),
+            )
+            room.draft_answers[parent_id] = answer
+            room.answers[parent_id] = answer
+            room.status = GameStatus.QUESTION
+            room.parent_answer_started_at = None
+            room.question_started_at = now()
+            self._advance_clock(room)
+            await self._persist_room_async(room)
+            return room
 
     @retry_room_conflicts
     async def lock_and_score(self, room: Room) -> dict:
@@ -854,31 +902,24 @@ class GameManager:
             question = room.current_question
             assert question
             room.answers = {**room.answers, **room.draft_answers}
-            counts = {"A": sum(a.choice == "A" for a in room.answers.values()), "B": sum(a.choice == "B" for a in room.answers.values())}
             parent_id = room.current_parent_id
-            parent_answer = room.answers.get(parent_id or "")
-            if counts["A"] == counts["B"]:
-                majority_choice = parent_answer.choice if parent_answer else None
-            else:
-                majority_choice = "A" if counts["A"] > counts["B"] else "B"
-            results = {player.id: 0 for player in room.players.values()}
-            if majority_choice:
-                for player_id, answer in room.answers.items():
-                    if answer.choice == majority_choice:
-                        results[player_id] += 1
-                    elif player_id == parent_id:
-                        results[player_id] -= min(1, room.players[player_id].score)
-                    else:
-                        results[player_id] -= min(1, room.players[player_id].score)
-                        if parent_id in room.players:
-                            results[parent_id] += 1
+            assert parent_id
+            resolution = self.rules.settle_round(RoundInput(
+                player_ids=tuple(room.players),
+                parent_id=parent_id,
+                choices={player_id: answer.choice for player_id, answer in room.answers.items()},
+                scores={player.id: player.score for player in room.players.values()},
+            ))
+            counts = resolution.counts
+            majority_choice = resolution.majority_choice
+            results = resolution.score_changes
             question_started_at = room.question_started_at or now()
             for player in room.players.values():
                 answer = room.answers.get(player.id)
                 elapsed_ms = int((answer.answered_at - question_started_at).total_seconds() * 1000) if answer else room.settings.question_duration * 1000
                 player.answer_time_ms += max(0, elapsed_ms)
-            for player_id, score in results.items():
-                room.players[player_id].score = max(0, room.players[player_id].score + score)
+            for player_id, score in resolution.scores_after.items():
+                room.players[player_id].score = score
             review = {
                 "question": {"id": question.id, "title": question.title, "option_a": question.option_a, "option_b": question.option_b},
                 "counts": counts,

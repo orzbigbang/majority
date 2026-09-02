@@ -11,7 +11,7 @@ const api = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const identityKey = "party-quiz-player";
 const avatarStyleVersion = process.env.NEXT_PUBLIC_AVATAR_STYLE_VERSION || "cute-animal-v1";
 type Identity = { player_id: string; username: string; avatar_url?: string; session_id?: string };
-type LobbyRoom = { room_id: string; status: string; player_count: number; max_players: number; game_name: string };
+type LobbyRoom = { room_id: string; title: string | null; status: string; player_count: number; max_players: number; game_name: string };
 type RoomSetup = { max_players: number; round_count: number; selection_duration: number; question_duration: number; between_question_duration: number };
 type RoomSetupDraft = { [Key in keyof RoomSetup]: string };
 type IdentityEntryStep = "idle" | "creating-avatar" | "entering";
@@ -162,15 +162,13 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (!roomSetupOpen) return;
-    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") setRoomSetupOpen(false); };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [roomSetupOpen]);
-
-  useEffect(() => {
     if (identity && destination) router.replace(`/room/${destination}`);
   }, [identity, destination, router]);
+
+  useEffect(() => {
+    if (!identityResolved) return;
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  }, [identityResolved, identity?.player_id]);
 
   async function saveIdentity(event: FormEvent) {
     event.preventDefault();
@@ -236,7 +234,7 @@ export default function Home() {
 
   if (!identity) return <><main id="main-content" className="lobby lobby-intro" inert={creatingIdentity || undefined} aria-busy={creatingIdentity}>
     <header className="page-heading intro-heading">
-      <a className="brand-lockup" href="/" aria-label="マジョリティ ホーム"><span className="brand-dice" aria-hidden="true">二択</span><span>マジョリティ</span></a>
+      <a className="brand-lockup" href="/" aria-label="マジョリティ ホーム">マジョリティ</a>
     </header>
     <section className="hero hero-stage" aria-labelledby="welcome-title">
       <span className="live-kicker"><i aria-hidden="true" /> みんなそろったら、すぐスタート</span>
@@ -279,7 +277,7 @@ export default function Home() {
         const joinable = room.status === "WAITING" && room.player_count < room.max_players;
         return <article className="room-card" key={room.room_id}>
           <div className="room-code" aria-label={`ルーム番号 ${room.room_id}`}><small>ルーム</small><strong>{room.room_id}</strong></div>
-          <div className="room-detail"><span className={`status status-${room.status.toLowerCase()}`}>{room.status === "WAITING" ? "● 参加受付中" : "ゲーム進行中"}</span><h3>{room.game_name}</h3><p className="muted">{room.player_count} / {room.max_players} 人</p></div>
+          <div className="room-detail"><span className={`status status-${room.status.toLowerCase()}`}>{room.status === "WAITING" ? "● 参加受付中" : "ゲーム進行中"}</span><h3>{room.title || room.game_name}</h3><p className="muted">{room.player_count} / {room.max_players} 人</p></div>
           <button type="button" disabled={!joinable} onClick={() => enterRoom(room.room_id)}>{joinable ? <>参加する <span aria-hidden="true">→</span></> : room.player_count >= room.max_players ? "満員" : "開始済み"}</button>
         </article>;
       })}</div>}
@@ -287,8 +285,8 @@ export default function Home() {
     {message && <p className="error" role="alert">{message}</p>}
     <footer className="lobby-footer"><a href="/admin">管理者入口</a></footer>
   </main>
-    <BottomSheet open={roomSetupOpen} onClose={() => setRoomSetupOpen(false)} labelledBy="room-setup-title" describedBy="room-setup-summary" closeLabel="キャンセル" header={<><span className="step-label">新しいルーム</span><h2 id="room-setup-title">ルーム設定を選ぶ</h2><p id="room-setup-summary" className="muted">遊ぶ人数とゲームのテンポを決めてください。</p></>}>
-      <form onSubmit={createRoom}>
+    <BottomSheet open={roomSetupOpen} onClose={() => setRoomSetupOpen(false)} labelledBy="room-setup-title" describedBy="room-setup-summary" closeLabel="キャンセル" className="room-setup-sheet" header={<><span className="step-label">新しいルーム</span><h2 id="room-setup-title">ルーム設定を選ぶ</h2><p id="room-setup-summary" className="muted">遊ぶ人数とゲームのテンポを決めてください。</p></>}>
+      <form className="room-setup-form" onSubmit={createRoom}>
         <div className="room-setup-grid">
           <SetupNumberInput label="ルームの定員" hint="範囲：2〜100人（オーナーを含む）" value={roomSetup.max_players} minimum={2} maximum={100} step={1} onChange={value => editSetup("max_players", value)} onBlur={() => normalizeSetup("max_players", 2, 100, 1, defaultRoomSetup.max_players)} />
           <SetupNumberInput label="ラウンド数" hint="1ラウンドで全員が1回ずつ親になります（1〜10ラウンド）" value={roomSetup.round_count} minimum={1} maximum={10} step={1} onChange={value => editSetup("round_count", value)} onBlur={() => normalizeSetup("round_count", 1, 10, 1, defaultRoomSetup.round_count)} />

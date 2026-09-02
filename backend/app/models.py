@@ -6,7 +6,7 @@ from enum import StrEnum
 from typing import Literal
 from uuid import uuid4
 
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 
 def now() -> datetime:
@@ -30,8 +30,6 @@ class Question(BaseModel):
     title: str
     option_a: str
     option_b: str
-    score_strategy: Literal["majority", "minority", "fixed"] = "majority"
-    score_config: dict[str, int | str] = Field(default_factory=lambda: {"winner_score": 1, "loser_score": 0})
     order: int = 0
 
 
@@ -141,6 +139,7 @@ class AdminSession(BaseModel):
 
 class GameSettings(BaseModel):
     game_name: str = "マジョリティ"
+    default_round_count: int = Field(default=1, ge=1, le=10)
     selection_duration: int = Field(default=15, ge=5, le=60)
     question_duration: int = Field(default=20, ge=5, le=120)
     result_duration: int = Field(default=5, ge=1, le=60)
@@ -150,18 +149,26 @@ class GameSettings(BaseModel):
 
 class RoomCreateRequest(JoinRequest):
     max_players: int = Field(default=12, ge=2, le=100)
-    round_count: int = Field(default=1, ge=1, le=10, validation_alias=AliasChoices("round_count", "question_count"))
+    round_count: int | None = Field(default=None, ge=1, le=10, validation_alias=AliasChoices("round_count", "question_count"))
     selection_duration: int = Field(default=15, ge=5, le=60, multiple_of=5)
     question_duration: int = Field(default=20, ge=10, le=60, multiple_of=10)
     between_question_duration: int = Field(default=5, ge=5, le=30, multiple_of=5)
 
-
 class RoomSettingsUpdate(BaseModel):
+    title: str | None = Field(default=None, max_length=40)
     max_players: int = Field(ge=2, le=100)
     round_count: int = Field(ge=1, le=10, validation_alias=AliasChoices("round_count", "question_count"))
     selection_duration: int = Field(default=15, ge=5, le=60, multiple_of=5)
     question_duration: int = Field(ge=10, le=60, multiple_of=10)
     between_question_duration: int = Field(ge=5, le=30, multiple_of=5)
+
+    @field_validator("title", mode="before")
+    @classmethod
+    def normalize_title(cls, value):
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
 
 
 class RoomUpdate(BaseModel):
@@ -173,6 +180,7 @@ class RoomState(BaseModel):
     """Serializable, persistent representation of a live game room."""
 
     id: str
+    title: str | None = None
     questions: list[Question]
     settings: GameSettings
     status: GameStatus = GameStatus.WAITING
@@ -187,6 +195,7 @@ class RoomState(BaseModel):
     selection_question_ids: list[str] = Field(default_factory=list)
     used_question_ids: list[str] = Field(default_factory=list)
     selection_started_at: datetime | None = None
+    parent_answer_started_at: datetime | None = None
     parent_disconnected_at: datetime | None = None
     current_question_index: int = 0
     question_started_at: datetime | None = None

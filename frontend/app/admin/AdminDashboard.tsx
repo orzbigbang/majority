@@ -12,15 +12,15 @@ const api = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const configuredGameUrl = process.env.NEXT_PUBLIC_GAME_URL?.trim().replace(/\/$/, "");
 const adminTokenKey = "party-quiz-admin-token";
 type Section = "overview" | "rooms" | "questions" | "settings" | "users";
-type Strategy = "majority" | "minority" | "fixed";
-type Settings = { game_name: string; question_duration: number; result_duration: number; countdown_duration: number; max_players: number };
-type SettingsDraft = Omit<Settings, "question_duration" | "result_duration" | "countdown_duration" | "max_players"> & {
+type Settings = { game_name: string; default_round_count: number; question_duration: number; result_duration: number; countdown_duration: number; max_players: number };
+type SettingsDraft = Omit<Settings, "default_round_count" | "question_duration" | "result_duration" | "countdown_duration" | "max_players"> & {
+  default_round_count: number | "";
   question_duration: number | "";
   result_duration: number | "";
   countdown_duration: number | "";
   max_players: number | "";
 };
-type Question = { id: string; title: string; option_a: string; option_b: string; score_strategy: Strategy; score_config: Record<string, number | string>; order: number };
+type Question = { id: string; title: string; option_a: string; option_b: string; order: number };
 type Player = { id: string; username: string; ready: boolean; connected: boolean; score: number };
 type RoomClock = { revision: number; phase: string; server_time: string; running: boolean; started_at: string | null; ends_at: string | null; duration_ms: number | null; remaining_ms: number };
 type Room = { room_id: string; status: string; owner_id: string | null; players: Player[]; settings: Settings; current_question_index: number; question_count: number; round_count: number; current_round: number; current_parent_id: string | null; answered: number; phase_started_at?: string; phase_duration?: number; clock: RoomClock; paused_status?: string; question?: { title: string; option_a: string; option_b: string }; result?: { counts: { A: number; B: number } } };
@@ -29,7 +29,7 @@ type User = { id: string; username: string; avatar_url: string; created_at: stri
 const nav: { section: Section; href: string; label: string }[] = [
   { section: "overview", href: "/admin", label: "概要" }, { section: "rooms", href: "/admin/rooms", label: "ルーム管理" }, { section: "users", href: "/admin/users", label: "プレイヤー名簿" }, { section: "questions", href: "/admin/questions", label: "質問管理" }, { section: "settings", href: "/admin/settings", label: "ゲーム設定" },
 ];
-const blankQuestion = (): Omit<Question, "id" | "order"> => ({ title: "", option_a: "押す", option_b: "押さない", score_strategy: "majority", score_config: { winner_score: 1, loser_score: 0 } });
+const blankQuestion = (): Omit<Question, "id" | "order"> => ({ title: "", option_a: "押す", option_b: "押さない" });
 
 function clockSecondsRemaining(clock: RoomClock | undefined, currentTime: number): number {
   if (!clock) return 0;
@@ -123,7 +123,7 @@ export default function AdminDashboard({ section }: { section: Section }) {
   async function saveUser(event: FormEvent) { event.preventDefault(); if (!editingUser) return; setSaving(true); try { const updated: User = await request(`/api/admin/users/${editingUser.id}`, { method: "PUT", body: JSON.stringify({ username: userName }) }); setUsers(current => current.map(user => user.id === updated.id ? updated : user)); setEditingUser(null); setMessage("ニックネームを更新しました。"); } catch (error) { setMessage(error instanceof Error ? error.message : "保存に失敗しました。"); } finally { setSaving(false); } }
   async function deleteUser(user: User) { if (!window.confirm(`ユーザー「${user.username}様」を削除しますか？`)) return; try { await request(`/api/admin/users/${user.id}`, { method: "DELETE" }); setUsers(current => current.filter(item => item.id !== user.id)); setMessage("ユーザーとアバターを削除しました。"); } catch (error) { setMessage(error instanceof Error ? error.message : "削除に失敗しました。"); } }
   function openQuestionCreator() { setMessage(""); setEditingQuestion(null); setDraft(blankQuestion()); setQuestionEditorOpen(true); }
-  function openQuestionEditor(question: Question) { setMessage(""); setEditingQuestion(question); setDraft({ title: question.title, option_a: "押す", option_b: "押さない", score_strategy: question.score_strategy, score_config: { ...question.score_config } }); setQuestionEditorOpen(true); }
+  function openQuestionEditor(question: Question) { setMessage(""); setEditingQuestion(question); setDraft({ title: question.title, option_a: "押す", option_b: "押さない" }); setQuestionEditorOpen(true); }
   function closeQuestionEditor() { if (saving) return; setQuestionEditorOpen(false); setEditingQuestion(null); setDraft(blankQuestion()); }
   async function saveQuestion(event: FormEvent) { event.preventDefault(); if (!draft.title.includes("しかし")) { setMessage("質問には転換語「しかし」を必ず入れてください。"); return; } setSaving(true); try { if (editingQuestion) await request(`/api/admin/questions/${editingQuestion.id}`, { method: "PUT", body: JSON.stringify({ ...draft, id: editingQuestion.id, order: editingQuestion.order }) }); else await request("/api/admin/questions", { method: "POST", body: JSON.stringify(draft) }); const savedAsEdit = Boolean(editingQuestion); setQuestionEditorOpen(false); setDraft(blankQuestion()); setEditingQuestion(null); await load(); setMessage(savedAsEdit ? "質問を更新しました。" : "質問を追加しました。"); } catch (error) { setMessage(error instanceof Error ? error.message : "保存に失敗しました。"); } finally { setSaving(false); } }
   async function removeQuestion(question: Question) { if (!window.confirm(`質問「${question.title}」を削除しますか？`)) return; try { await request(`/api/admin/questions/${question.id}`, { method: "DELETE" }); await load(); setMessage("質問を削除しました。"); } catch (error) { setMessage(error instanceof Error ? error.message : "削除に失敗しました。"); } }
@@ -193,6 +193,6 @@ export default function AdminDashboard({ section }: { section: Section }) {
         </form>
       </BottomSheet>
     </>}
-    {section === "settings" && settings && <section className="card"><h2>デフォルトのゲーム設定</h2><p className="muted">これから新しく作成するルームにのみ適用されます。</p><form className="editor-form" onSubmit={saveSettings}><label>ゲーム名<input value={settings.game_name} onChange={event => setSettings({ ...settings, game_name: event.target.value })} required /></label><div className="form-grid"><label>最大参加人数<input type="number" min="2" max="100" value={settings.max_players} onChange={event => setSettings({ ...settings, max_players: event.target.value === "" ? "" : Number(event.target.value) })} required /></label><label>1問の制限時間（秒）<input type="number" min="5" max="120" value={settings.question_duration} onChange={event => setSettings({ ...settings, question_duration: event.target.value === "" ? "" : Number(event.target.value) })} required /></label><label>結果の表示時間（秒）<input type="number" min="1" max="60" value={settings.result_duration} onChange={event => setSettings({ ...settings, result_duration: event.target.value === "" ? "" : Number(event.target.value) })} required /></label><label>開始前カウントダウン（秒）<input type="number" min="0" max="10" value={settings.countdown_duration} onChange={event => setSettings({ ...settings, countdown_duration: event.target.value === "" ? "" : Number(event.target.value) })} required /></label></div><button disabled={saving}>デフォルト設定を保存</button></form></section>}
+    {section === "settings" && settings && <section className="card"><h2>デフォルトのゲーム設定</h2><p className="muted">これから新しく作成するルームにのみ適用されます。</p><form className="editor-form" onSubmit={saveSettings}><label>ゲーム名<input value={settings.game_name} onChange={event => setSettings({ ...settings, game_name: event.target.value })} required /></label><div className="form-grid"><label>最大参加人数<input type="number" min="2" max="100" value={settings.max_players} onChange={event => setSettings({ ...settings, max_players: event.target.value === "" ? "" : Number(event.target.value) })} required /></label><label>デフォルトのラウンド数<input type="number" min="1" max="10" value={settings.default_round_count} onChange={event => setSettings({ ...settings, default_round_count: event.target.value === "" ? "" : Number(event.target.value) })} required /></label><label>1問の制限時間（秒）<input type="number" min="5" max="120" value={settings.question_duration} onChange={event => setSettings({ ...settings, question_duration: event.target.value === "" ? "" : Number(event.target.value) })} required /></label><label>結果の表示時間（秒）<input type="number" min="1" max="60" value={settings.result_duration} onChange={event => setSettings({ ...settings, result_duration: event.target.value === "" ? "" : Number(event.target.value) })} required /></label><label>開始前カウントダウン（秒）<input type="number" min="0" max="10" value={settings.countdown_duration} onChange={event => setSettings({ ...settings, countdown_duration: event.target.value === "" ? "" : Number(event.target.value) })} required /></label></div><button disabled={saving}>デフォルト設定を保存</button></form></section>}
   </main>;
 }

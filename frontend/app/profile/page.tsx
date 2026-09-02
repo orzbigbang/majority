@@ -83,7 +83,6 @@ export default function ProfilePage() {
   return <main id="main-content" className="profile-page">
     <nav className="profile-nav" aria-label="プロフィールのナビゲーション">
       <Link className="text-link" href="/"><span aria-hidden="true">←</span> ロビーへ戻る</Link>
-      <span className="brand-lockup"><span className="brand-dice" aria-hidden="true">二択</span><span>マジョリティ</span></span>
     </nav>
 
     {profile && <>
@@ -112,7 +111,7 @@ export default function ProfilePage() {
       </section>}
       {message && <p className={message.includes("更新") ? "notice profile-message" : "error"} role="status">{message}</p>}
 
-      <section className="profile-stats" aria-label="これまでの戦績">
+      <section className="profile-stats" aria-label="これまでのプレイ記録">
         <article><small>プレイ</small><strong>{profile.stats.games}</strong><span>ゲーム</span></article>
         <article><small>1位</small><strong>{profile.stats.wins}</strong><span>回</span></article>
         <article><small>平均順位</small><strong>{profile.stats.average_rank ?? "—"}</strong><span>{profile.stats.average_rank ? "位" : ""}</span></article>
@@ -120,8 +119,8 @@ export default function ProfilePage() {
       </section>
 
       <section className="card history-board" aria-labelledby="history-title">
-        <div className="section-heading"><div><span className="step-label">プレイログ</span><h2 id="history-title">これまでの戦績と選択</h2><p className="muted">ゲームごとに、順位とあなたが選んだ答えを振り返れます。</p></div></div>
-        {profile.history.length === 0 ? <div className="empty"><span className="empty-mark" aria-hidden="true">?</span><div><h3>最初の戦績はこれから</h3><p className="muted">ゲームを最後まで遊ぶと、結果がここに残ります。</p></div></div> : <div className="game-history">{profile.history.map((game, gameIndex) => <details key={game.id} open={gameIndex === 0}>
+        <div className="section-heading"><div><span className="step-label">プレイログ</span><h2 id="history-title">これまでの記録と選択</h2><p className="muted">ゲームごとに、順位とあなたが選んだ答えを振り返れます。</p></div></div>
+        {profile.history.length === 0 ? <div className="empty"><span className="empty-mark" aria-hidden="true">?</span><div><h3>最初の記録はこれから</h3><p className="muted">ゲームを最後まで遊ぶと、結果がここに残ります。</p></div></div> : <div className="game-history">{profile.history.map((game, gameIndex) => <details key={game.id} open={gameIndex === 0}>
           <summary><span className={`history-rank rank-${Math.min(game.rank, 4)}`}><strong>{game.rank}</strong>位</span><span className="history-game"><strong>{game.game_name}</strong><small>{formatDate(game.finished_at)} · ルーム {game.room_id}</small></span><span className="history-score">{game.score}<small>pt</small></span></summary>
           <div className="choice-trail">{game.answers.map((answer, index) => <article key={`${answer.question_id}-${index}`} className={`past-choice past-choice-${answer.choice || "none"}`}>
             <div className="choice-index">Q{index + 1}</div><div className="choice-history-copy"><strong><QuestionText title={answer.question} /></strong><span>{answer.choice ? (answer.choice === "A" ? "押す" : "押さない") : "未回答"}</span></div><div className="choice-history-result"><strong>{answer.score > 0 ? `+${answer.score}` : answer.score}</strong><small>押す {answer.a_count} : {answer.b_count} 押さない</small></div>

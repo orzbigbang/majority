@@ -55,6 +55,9 @@ def test_one_round_gives_every_player_one_parent_turn() -> None:
         assert room.status == GameStatus.PARENT_ANSWERING
         assert room.clock_version == 5
         assert room.snapshot()["question"]["id"] == "only"
+        assert room.snapshot()["clock"]["phase"] == GameStatus.PARENT_ANSWERING
+        assert room.snapshot()["clock"]["duration_ms"] == 20_000
+        assert room.snapshot()["clock"]["running"] is True
         try:
             await manager.answer(room.id, "bob", "only", "A")
             assert False, "Other players must wait for the parent to answer"
@@ -268,7 +271,8 @@ def test_only_owner_can_update_waiting_room_settings() -> None:
         except Exception as error:
             assert getattr(error, "detail", None) == "OWNER_ONLY"
 
-        changed = await manager.update_room_settings(room.id, "owner", 8, 2, 25, 30, 10)
+        changed = await manager.update_room_settings(room.id, "owner", 8, 2, 25, 30, 10, "Friday Night")
+        assert changed.title == "Friday Night"
         assert changed.settings.max_players == 8
         assert changed.settings.selection_duration == 25
         assert changed.settings.question_duration == 30
@@ -340,6 +344,33 @@ def test_selection_offers_three_unused_questions_and_auto_selects_on_timeout() -
         await manager.next(room.id)
         assert len(room.snapshot()["question_options"]) == 3
         assert room.used_question_ids == []
+
+    from app.models import now
+
+    asyncio.run(run())
+
+
+def test_parent_answer_timeout_uses_draft_then_starts_shared_question_clock() -> None:
+    async def run() -> None:
+        manager = GameManager()
+        manager.questions = [Question(id="only", title="A or B?", option_a="A", option_b="B")]
+        manager.settings = GameSettings(countdown_duration=0, question_duration=20)
+        room = manager.create_room()
+        await manager.join(room.id, "Owner", None, "owner")
+        await manager.join(room.id, "Player", None, "player")
+        await manager.mark_ready(room.id, "player")
+        await manager.start(room.id, "owner")
+        await manager.choose_question(room.id, "owner", "only")
+        await manager.select_answer(room.id, "owner", "only", "B")
+
+        room.parent_answer_started_at = now() - timedelta(seconds=21)
+        await manager.auto_answer_parent(room)
+
+        assert room.status == GameStatus.QUESTION
+        assert room.answers["owner"].choice == "B"
+        assert room.parent_answer_started_at is None
+        assert room.snapshot()["clock"]["phase"] == GameStatus.QUESTION
+        assert room.snapshot()["clock"]["duration_ms"] == 20_000
 
     from app.models import now
 

@@ -29,6 +29,7 @@ export type ReactionEvent = {
 };
 
 type Point = { x: number; y: number };
+type PickerPosition = Point & { caretX: number; placement: "above" | "below" };
 type ReactionIdentity = { player_id: string; username: string };
 const reactionAnchors = new Map<string, Map<HTMLElement, string>>();
 
@@ -105,18 +106,28 @@ export function useRoomReactions({ ws, identity, status, scopeId, onError }: {
     setAnchor(null);
   }, []);
 
-  const send = useCallback((reactionId: ReactionId) => {
+  useLayoutEffect(() => {
+    if (!anchor) return;
+    anchor.classList.add("is-active");
+    anchor.setAttribute("aria-expanded", "true");
+    return () => {
+      anchor.classList.remove("is-active");
+      anchor.setAttribute("aria-expanded", "false");
+    };
+  }, [anchor]);
+
+  const send = useCallback((reactionId: ReactionId): boolean => {
     if (!target || !identity || !ws || ws.readyState !== WebSocket.OPEN) {
       onError("再接続後にリアクションを送れます。");
       closePicker();
-      return;
+      return false;
     }
-    if (!scopeId || (status !== "WAITING" && status !== "SHOW_RESULT")) return;
+    if (!scopeId || (status !== "WAITING" && status !== "SHOW_RESULT")) return false;
     const sentAt = Date.now();
-    if (sentAt - lastSentAt.current < 800) return;
+    if (sentAt - lastSentAt.current < 800) return false;
     lastSentAt.current = sentAt;
     ws.send(JSON.stringify({ type: "emoji_reaction", payload: { reaction_id: reactionId, target_player_id: target.id, scope_id: scopeId } }));
-    closePicker();
+    return true;
   }, [target, identity, ws, scopeId, status, onError, closePicker]);
 
   useEffect(() => {
@@ -128,10 +139,11 @@ export function useRoomReactions({ ws, identity, status, scopeId, onError }: {
 
 export type RoomReactionsController = ReturnType<typeof useRoomReactions>;
 
-export function ReactionAvatarButton({ target, disabled = false, compact = false, surfaceId = "default", onSelect, children }: {
+export function ReactionAvatarButton({ target, disabled = false, compact = false, active = false, surfaceId = "default", onSelect, children }: {
   target: ReactionTarget;
   disabled?: boolean;
   compact?: boolean;
+  active?: boolean;
   surfaceId?: string;
   onSelect: (target: ReactionTarget, anchor: HTMLElement) => void;
   children: ReactNode;
@@ -150,9 +162,11 @@ export function ReactionAvatarButton({ target, disabled = false, compact = false
   return <button
     ref={attachAnchor}
     type="button"
-    className={`reaction-avatar-trigger${compact ? " compact" : ""}`}
+    className={`reaction-avatar-trigger${compact ? " compact" : ""}${active ? " is-active" : ""}`}
     data-reaction-player-id={target.id}
     aria-label={`${target.username}さんにリアクションを送る`}
+    aria-haspopup="dialog"
+    aria-expanded={active}
     onClick={event => onSelect(target, event.currentTarget)}
   >{children}<span className="reaction-avatar-hint" aria-hidden="true">＋</span></button>;
 }
@@ -196,18 +210,25 @@ export function ReactionPicker({ target, anchor, onClose, onSend }: {
   target: ReactionTarget | null;
   anchor: HTMLElement | null;
   onClose: () => void;
-  onSend: (reaction: ReactionId) => void;
+  onSend: (reaction: ReactionId) => boolean;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
-  const [position, setPosition] = useState<Point>({ x: 0, y: 0 });
+  const [position, setPosition] = useState<PickerPosition>({ x: 0, y: 0, caretX: 196, placement: "below" });
+  const [sentReaction, setSentReaction] = useState<ReactionId | null>(null);
+  const sentTimer = useRef<number | null>(null);
 
   useLayoutEffect(() => {
     if (!target || !anchor) return;
     const update = () => {
       const rect = anchor.getBoundingClientRect();
-      const panelHalfWidth = Math.min(392, window.innerWidth - 24) / 2;
+      const panelWidth = Math.min(392, window.innerWidth - 24);
+      const panelHalfWidth = panelWidth / 2;
       const x = Math.min(window.innerWidth - panelHalfWidth - 12, Math.max(panelHalfWidth + 12, rect.left + rect.width / 2));
-      setPosition({ x, y: rect.bottom + 12 });
+      const estimatedPanelHeight = panelRef.current?.offsetHeight || 112;
+      const roomBelow = window.innerHeight - rect.bottom;
+      const placement = roomBelow < estimatedPanelHeight + 28 && rect.top > estimatedPanelHeight + 28 ? "above" : "below";
+      const caretX = Math.min(panelWidth - 26, Math.max(26, rect.left + rect.width / 2 - (x - panelHalfWidth)));
+      setPosition({ x, y: placement === "above" ? rect.top - 12 : rect.bottom + 12, caretX, placement });
     };
     update();
     window.addEventListener("resize", update);
@@ -227,11 +248,22 @@ export function ReactionPicker({ target, anchor, onClose, onSend }: {
     return () => { document.removeEventListener("keydown", onKeyDown); document.removeEventListener("pointerdown", onPointerDown); };
   }, [target, anchor, onClose]);
 
+  useEffect(() => () => {
+    if (sentTimer.current) window.clearTimeout(sentTimer.current);
+  }, []);
+
+  const sendWithFeedback = (reactionId: ReactionId) => {
+    if (!onSend(reactionId)) return;
+    setSentReaction(reactionId);
+    if (sentTimer.current) window.clearTimeout(sentTimer.current);
+    sentTimer.current = window.setTimeout(() => setSentReaction(null), 560);
+  };
+
   if (!target) return null;
-  return <div ref={panelRef} className="reaction-picker" role="dialog" aria-label={`${target.username}さんへのリアクション`} style={{ "--picker-x": `${position.x}px`, "--picker-y": `${position.y}px` } as CSSProperties}>
-    <div className="reaction-picker-copy"><strong>{target.username}</strong><span>さんへ</span></div>
-    <div className="reaction-options">{REACTIONS.map(item => <button key={item.id} type="button" className="reaction-option" aria-label={item.label} onClick={() => onSend(item.id)}>
-      <AnimatedReactionSticker reaction={item.id} preview /><small>{item.label}</small>
+  return <div ref={panelRef} className={`reaction-picker is-${position.placement}`} role="dialog" aria-label={`${target.username}さんへのリアクション`} style={{ "--picker-x": `${position.x}px`, "--picker-y": `${position.y}px`, "--picker-caret-x": `${position.caretX}px` } as CSSProperties}>
+    <div className="reaction-picker-copy"><span className="reaction-picker-target" aria-hidden="true">TO</span><strong>{target.username}</strong><span>さんへ</span><span className="reaction-picker-note">何度でも送れます</span></div>
+    <div className="reaction-options">{REACTIONS.map(item => <button key={item.id} type="button" className={`reaction-option${sentReaction === item.id ? " is-sent" : ""}`} aria-label={item.label} onClick={() => sendWithFeedback(item.id)}>
+      <span className="reaction-option-art"><AnimatedReactionSticker reaction={item.id} preview /><i aria-hidden="true" /></span><small>{sentReaction === item.id ? "送信！" : item.label}</small>
     </button>)}</div>
   </div>;
 }
@@ -248,17 +280,19 @@ function ReactionBurst({ event, index }: { event: ReactionEvent; index: number }
     setTarget({ x: targetRect.left + targetRect.width / 2, y: targetRect.top + targetRect.height / 2 });
     setSource(sourceRect ? { x: sourceRect.left + sourceRect.width / 2, y: sourceRect.top + sourceRect.height / 2 } : { x: targetRect.left - 36, y: targetRect.bottom + 36 });
     targetElement.classList.remove("reaction-hit");
-    requestAnimationFrame(() => targetElement.classList.add("reaction-hit"));
-    const hitTimer = window.setTimeout(() => targetElement.classList.remove("reaction-hit"), 950);
-    return () => { window.clearTimeout(hitTimer); targetElement.classList.remove("reaction-hit"); };
+    const hitTimer = window.setTimeout(() => targetElement.classList.add("reaction-hit"), 650);
+    const clearTimer = window.setTimeout(() => targetElement.classList.remove("reaction-hit"), 1420);
+    return () => { window.clearTimeout(hitTimer); window.clearTimeout(clearTimer); targetElement.classList.remove("reaction-hit"); };
   }, [event]);
   if (!target || !source) return null;
   const offset = (index % 3 - 1) * 14;
+  const fromX = source.x - target.x;
+  const fromY = source.y - target.y;
   return <div className="reaction-burst" style={{
     "--burst-x": `${target.x + offset}px`, "--burst-y": `${target.y}px`,
-    "--from-x": `${source.x - target.x}px`, "--from-y": `${source.y - target.y}px`,
+    "--from-x": `${fromX}px`, "--from-y": `${fromY}px`,
   } as CSSProperties} aria-hidden="true">
-    <span className="reaction-flight"><AnimatedReactionSticker reaction={event.reaction_id} /><i className="reaction-confetti confetti-one" /><i className="reaction-confetti confetti-two" /><i className="reaction-confetti confetti-three" /></span>
+    <span className="reaction-flight"><AnimatedReactionSticker reaction={event.reaction_id} /></span>
   </div>;
 }
 

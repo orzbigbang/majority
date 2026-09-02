@@ -4,6 +4,9 @@ import tempfile
 
 from playwright.sync_api import sync_playwright
 
+API_BASE = os.environ.get("REACTION_TEST_API_BASE", "http://127.0.0.1:8011")
+WEB_BASE = os.environ.get("REACTION_TEST_WEB_BASE", "http://127.0.0.1:3011")
+
 
 def seed_identity(page, identity):
     encoded = json.dumps(json.dumps(identity))
@@ -22,7 +25,7 @@ with sync_playwright() as playwright:
     owner.on("console", lambda message: errors.append(message.text) if message.type == "error" else None)
     guest.on("console", lambda message: errors.append(message.text) if message.type == "error" else None)
 
-    api = playwright.request.new_context(base_url="http://127.0.0.1:8011")
+    api = playwright.request.new_context(base_url=API_BASE)
     created = api.post("/api/rooms", data={
         "username": "OwnerCheck", "player_id": "owner-check",
         "max_players": 6, "round_count": 1,
@@ -35,8 +38,8 @@ with sync_playwright() as playwright:
 
     seed_identity(owner, {"player_id": created_data["player_id"], "username": "OwnerCheck", "session_id": created_data["session_id"]})
     seed_identity(guest, guest_identity)
-    owner.goto(f"http://127.0.0.1:3011/room/{room_id}", wait_until="domcontentloaded", timeout=60_000)
-    guest.goto(f"http://127.0.0.1:3011/room/{room_id}", wait_until="domcontentloaded", timeout=60_000)
+    owner.goto(f"{WEB_BASE}/room/{room_id}", wait_until="domcontentloaded", timeout=60_000)
+    guest.goto(f"{WEB_BASE}/room/{room_id}", wait_until="domcontentloaded", timeout=60_000)
     try:
         guest.locator(".waiting-card").wait_for(timeout=15_000)
     except Exception:
@@ -59,19 +62,25 @@ with sync_playwright() as playwright:
     owner.screenshot(path=waiting_picker, full_page=True)
     owner.get_by_role("button", name="拍手").click()
     guest.locator(".reaction-flight").wait_for(timeout=3_000)
-    owner.wait_for_timeout(520)
+    owner.wait_for_timeout(320)
     assert owner.locator(".reaction-flight").count() > 0
+    waiting_flight = os.path.join(tempfile.gettempdir(), "majority-reaction-waiting-flight.png")
+    owner.screenshot(path=waiting_flight, full_page=True)
+    owner.wait_for_timeout(440)
     waiting_burst = os.path.join(tempfile.gettempdir(), "majority-reaction-waiting-burst.png")
     owner.screenshot(path=waiting_burst, full_page=True)
     received_burst = os.path.join(tempfile.gettempdir(), "majority-reaction-received-burst.png")
     guest.screenshot(path=received_burst, full_page=True)
+    owner.keyboard.press("Escape")
 
     owner.locator(".waiting-primary-action").wait_for(state="visible")
     owner.locator(".waiting-primary-action").click()
-    owner.locator(".question-card").wait_for(timeout=15_000)
-    guest.locator(".question-card").wait_for(timeout=15_000)
+    owner.locator(".question-deck-card.is-active button").wait_for(timeout=20_000)
+    owner.locator(".question-deck-card.is-active button").click()
+    owner.locator(".parent-first-answer").wait_for(timeout=10_000)
     owner.locator(".choice.a").click()
     owner.locator(".confirm-answer").click()
+    guest.locator(".question-card").wait_for(timeout=10_000)
     guest.locator(".choice.b").click()
     guest.locator(".confirm-answer").click()
 
@@ -87,12 +96,12 @@ with sync_playwright() as playwright:
     owner.screenshot(path=result_picker, full_page=True)
     owner.get_by_role("button", name="照れ笑い").click()
     guest.locator(".reaction-flight").wait_for(timeout=3_000)
-    owner.wait_for_timeout(520)
+    owner.wait_for_timeout(760)
     result_burst = os.path.join(tempfile.gettempdir(), "majority-reaction-result-burst.png")
     owner.screenshot(path=result_burst, full_page=True)
 
     assert not errors, errors
-    print(json.dumps({"room": room_id, "screenshots": [mobile_picker, waiting_picker, waiting_burst, received_burst, result_picker, result_burst]}, ensure_ascii=False))
+    print(json.dumps({"room": room_id, "screenshots": [mobile_picker, waiting_picker, waiting_flight, waiting_burst, received_burst, result_picker, result_burst]}, ensure_ascii=False))
     api.dispose()
     owner_context.close()
     guest_context.close()

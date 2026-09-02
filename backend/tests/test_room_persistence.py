@@ -77,12 +77,13 @@ def test_room_created_on_one_instance_is_visible_and_joinable_on_another() -> No
         first = configured_manager(repository)
         second = configured_manager(repository)
 
-        room = first.create_room()
+        room = first.create_room(title="Persisted title")
         owner = await first.join(room.id, "Owner", None, "owner")
         # Production instances receive creation and updates through the room watch.
         second.accept_remote_state(room.id, repository.get_room(room.id))
 
         assert [item["room_id"] for item in second.lobby()] == [room.id]
+        assert second.lobby()[0]["title"] == "Persisted title"
         joined = await second.join(room.id, "Player", None, "player")
 
         # Production instances receive this update through the Firestore room watch.

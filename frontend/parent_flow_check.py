@@ -11,6 +11,16 @@ def seed_identity(context, identity):
     context.add_init_script(script=f"window.localStorage.setItem('party-quiz-player', {encoded});")
 
 
+def assert_no_vertical_scroll(page, phase):
+    metrics = page.evaluate("""() => ({
+        viewport: window.innerHeight,
+        document: document.documentElement.scrollHeight,
+        body: document.body.scrollHeight,
+    })""")
+    assert metrics["document"] <= metrics["viewport"] and metrics["body"] <= metrics["viewport"], \
+        f"{phase} overflows vertically: {metrics}"
+
+
 with sync_playwright() as playwright:
     browser = playwright.chromium.launch(headless=True, args=["--no-proxy-server"])
     owner_context = browser.new_context(viewport={"width": 1120, "height": 900})
@@ -55,6 +65,7 @@ with sync_playwright() as playwright:
 
     owner.locator(".question-deck").wait_for(timeout=15_000)
     guest.locator(".wait-selecting").wait_for(timeout=15_000)
+    assert_no_vertical_scroll(guest, "guest selecting wait")
     assert owner.locator(".question-deck-card").count() == 3
     assert owner.locator(".parent-selection-card .timer").is_visible()
     assert guest.locator(".parent-selection-card .timer").is_visible()
@@ -66,6 +77,7 @@ with sync_playwright() as playwright:
 
     owner.locator(".parent-first-answer").wait_for(timeout=5_000)
     guest.locator(".wait-answering").wait_for(timeout=5_000)
+    assert_no_vertical_scroll(guest, "guest parent-answer wait")
     owner.get_by_role("button", name="押す", exact=True).click()
     owner.get_by_role("button", name="誰にも見せず「押す」で確定").click()
 
@@ -99,8 +111,8 @@ with sync_playwright() as playwright:
         page.on("pageerror", lambda error: errors.append(str(error)))
         page.on("console", lambda message: errors.append(message.text) if message.type == "error" else None)
     auto_room_id = auto_created["room"]["room_id"]
-    auto_owner.goto(f"{frontend_base}/room/{auto_room_id}", wait_until="commit", timeout=15_000)
-    auto_guest.goto(f"{frontend_base}/room/{auto_room_id}", wait_until="commit", timeout=15_000)
+    auto_owner.goto(f"{frontend_base}/room/{auto_room_id}", wait_until="domcontentloaded", timeout=30_000)
+    auto_guest.goto(f"{frontend_base}/room/{auto_room_id}", wait_until="domcontentloaded", timeout=30_000)
     auto_owner.locator(".waiting-card").wait_for(timeout=15_000)
     auto_guest.locator(".waiting-card").wait_for(timeout=15_000)
     auto_guest.locator(".ready-toggle").click()
