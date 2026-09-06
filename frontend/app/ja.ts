@@ -46,6 +46,7 @@ const apiMessages: Record<string, string> = {
 const statusLabels: Record<string, string> = {
   WAITING: "待機中",
   COUNTDOWN: "開始前",
+  TURN_INTRO: "次の画面を案内中",
   SELECTING: "親が問題を選択中",
   PARENT_ANSWERING: "親が先に回答中",
   QUESTION: "回答中",
@@ -62,6 +63,7 @@ export type GameRuleSpec = {
   score_floor: number;
   tie_breaker: string;
   parent_collects_from_minority: boolean;
+  parent_collects_only_when_majority: boolean;
   parent_collects_when_minority_has_zero: boolean;
   minority_parent_pays_to_table: boolean;
 };
@@ -73,6 +75,7 @@ export const defaultGameRuleSpec: GameRuleSpec = {
   score_floor: 0,
   tie_breaker: "parent_choice",
   parent_collects_from_minority: true,
+  parent_collects_only_when_majority: true,
   parent_collects_when_minority_has_zero: true,
   minority_parent_pays_to_table: true,
 };
@@ -80,8 +83,8 @@ export const defaultGameRuleSpec: GameRuleSpec = {
 export const gameRulesCopy = {
   closeLabel: "ルールを閉じる",
   eyebrow: "HOW TO PLAY",
-  title: "遊び方は3つだけ",
-  summary: "選ぶ、押す、多数派になる。",
+  title: "遊び方は4つだけ",
+  summary: "選ぶ、秘密で答える、自分で決める、多数派になる。",
   choices: {
     yes: "押す",
     no: "押さない",
@@ -90,25 +93,61 @@ export const gameRulesCopy = {
   steps: [
     {
       title: "親が問題を選ぶ",
-      description: "「しかし」の前後を読んで、迷いそうな一問を選びます。",
+      description: "まだ使われていない3つの候補から、「しかし」の前後を読んで、意見が分かれそうな一問を選びます。",
     },
     {
-      title: "それぞれ答えを選ぶ",
-      description: "「押す」か「押さない」かを各自で選び、回答を確定します。",
+      title: "親が先に答える",
+      description: "親が先に「押す」か「押さない」かを決めます。親の答えは結果発表まで、ほかの人には見えません。",
+    },
+    {
+      title: "自分の答えを選ぶ",
+      description: "親の回答が決まったら、あなたも「押す」か「押さない」かを選び、自分の回答を確定します。",
     },
     {
       title: (rules: GameRuleSpec) => `多数派は＋${rules.majority_reward}ポイント`,
-      description: (rules: GameRuleSpec) => [
-        `全員${rules.initial_score}点から開始。少数派は−${rules.minority_penalty}`,
-        rules.parent_collects_from_minority ? "、親は少数派1人につき同じ点数を獲得" : "",
-        rules.parent_collects_from_minority && rules.parent_collects_when_minority_has_zero ? "（少数派が0点でも獲得）" : "",
-        "。",
-        rules.minority_parent_pays_to_table ? `親自身が少数派なら−${rules.minority_penalty}は場へ。` : "",
-        `${rules.score_floor}未満にはなりません。`,
-      ].join(""),
+      description: "多数派と親には、次のようにポイントが入ります。",
     },
   ],
-  loop: (rules: GameRuleSpec) => `${rules.tie_breaker === "parent_choice" ? "同数なら親側が多数派。" : ""}親を交代し、最後に最高得点の人が勝ち！`,
+  scoring: {
+    starting: (rules: GameRuleSpec) => `全員${rules.initial_score}ポイントからスタート`,
+    majority: {
+      label: "多数派",
+      detail: (rules: GameRuleSpec) => `全員＋${rules.majority_reward}ポイント`,
+    },
+    minority: {
+      label: "少数派（親以外）",
+      detail: (rules: GameRuleSpec) => rules.parent_collects_from_minority
+        ? rules.parent_collects_only_when_majority
+          ? `−${rules.minority_penalty}ポイント。親が多数派なら親へ、親が少数派なら場へ`
+          : `−${rules.minority_penalty}ポイント。その${rules.minority_penalty}ポイントは親へ`
+        : `−${rules.minority_penalty}ポイント`,
+    },
+    parentMajority: {
+      label: "親が多数派",
+      detail: (rules: GameRuleSpec) => rules.parent_collects_from_minority
+        ? `＋${rules.majority_reward} ＋（親以外の少数派人数 × ${rules.minority_penalty}）`
+        : `＋${rules.majority_reward}ポイント`,
+    },
+    parentMinority: {
+      label: "親が少数派",
+      detail: (rules: GameRuleSpec) => [
+        rules.minority_parent_pays_to_table ? `−${rules.minority_penalty}ポイント` : "ポイントは減りません",
+        rules.parent_collects_from_minority && !rules.parent_collects_only_when_majority ? "。ほかの少数派からのポイントは獲得" : "",
+      ].join(""),
+    },
+    example: (rules: GameRuleSpec) => rules.parent_collects_from_minority
+      ? `例：親が多数派で少数派が1人なら、親は合計＋${rules.majority_reward + rules.minority_penalty}ポイント`
+      : `例：親が多数派なら、親も＋${rules.majority_reward}ポイント`,
+    notes: (rules: GameRuleSpec) => [
+      rules.tie_breaker === "parent_choice" ? "同数なら、親がいる方を多数派とします。" : "",
+      `ポイントは${rules.score_floor}未満にはなりません。`,
+      rules.parent_collects_from_minority && rules.parent_collects_when_minority_has_zero
+        ? `${rules.score_floor}ポイントの人が少数派でも、${rules.parent_collects_only_when_majority ? "多数派の" : ""}親は${rules.minority_penalty}ポイント獲得します。`
+        : "",
+      "未回答の人は人数に数えず、ポイントも変わりません。",
+    ].filter(Boolean),
+  },
+  loop: "1ラウンドで全員が1回ずつ親になります。親を交代し、最後に最高得点の人が勝ち！",
 } as const;
 
 export function apiMessage(value: unknown, fallback: string): string {

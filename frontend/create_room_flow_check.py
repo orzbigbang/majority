@@ -9,7 +9,7 @@ ROOM_SCREENSHOT = r"C:\Users\64294\AppData\Local\Temp\majority-create-room-enter
 
 with sync_playwright() as playwright:
     browser = playwright.chromium.launch(headless=True)
-    page = browser.new_page(viewport={"width": 1280, "height": 900})
+    page = browser.new_page(viewport={"width": 390, "height": 844})
     browser_errors: list[str] = []
     failed_responses: list[str] = []
     page.on("console", lambda message: browser_errors.append(message.text) if message.type == "error" else None)
@@ -43,6 +43,15 @@ with sync_playwright() as playwright:
     )
 
     page.locator(".create-room-button").click()
+    setup_sheet = page.locator(".room-setup-sheet")
+    setup_sheet.wait_for(state="visible")
+    create_button = setup_sheet.get_by_role("button", name="この設定で作成")
+    button_box = create_button.bounding_box()
+    sheet_box = setup_sheet.bounding_box()
+    assert button_box is not None and sheet_box is not None
+    assert button_box["y"] >= sheet_box["y"]
+    assert button_box["y"] + button_box["height"] <= min(844, sheet_box["y"] + sheet_box["height"])
+    create_button.click()
     overlay = page.get_by_role("dialog")
     overlay.wait_for(state="visible")
     assert "専用ルームを作成しています" in overlay.inner_text()
@@ -54,6 +63,7 @@ with sync_playwright() as playwright:
     page.wait_for_url(re.compile(r"/room/[A-Z0-9]{4}$"), timeout=15_000)
     page.locator(".waiting-card h2").wait_for(timeout=15_000)
     assert page.locator(".ready-list article").count() == 1
+    assert page.locator(".game-header h1").is_visible()
     assert "OwnerTest" in page.locator(".ready-list article").inner_text()
     assert "様" in page.locator(".ready-list article").inner_text()
 

@@ -3,11 +3,13 @@
 import { FormEvent, useEffect, useId, useState } from "react";
 import { useRouter } from "next/navigation";
 import { BottomSheet } from "./BottomSheet";
-import { apiMessage } from "./ja";
+import { GameRules } from "./GameRules";
+import { apiMessage, gameRulesCopy } from "./ja";
 import { PlayerName } from "./PlayerName";
 import { useRoomExitNotice } from "./useRoomExit";
 
 const api = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const configuredGameUrl = process.env.NEXT_PUBLIC_GAME_URL?.trim().replace(/\/$/, "");
 const identityKey = "party-quiz-player";
 const avatarStyleVersion = process.env.NEXT_PUBLIC_AVATAR_STYLE_VERSION || "cute-animal-v1";
 type Identity = { player_id: string; username: string; avatar_url?: string; session_id?: string };
@@ -16,6 +18,11 @@ type RoomSetup = { max_players: number; round_count: number; selection_duration:
 type RoomSetupDraft = { [Key in keyof RoomSetup]: string };
 type IdentityEntryStep = "idle" | "creating-avatar" | "entering";
 const defaultRoomSetup: RoomSetup = { max_players: 12, round_count: 1, selection_duration: 15, question_duration: 20, between_question_duration: 5 };
+const tempoPresets = [
+  { id: "quick", label: "テンポよく", detail: "直感で選ぶ", selection_duration: 10, question_duration: 10, between_question_duration: 5 },
+  { id: "standard", label: "標準", detail: "ほどよく考える", selection_duration: 15, question_duration: 20, between_question_duration: 5 },
+  { id: "relaxed", label: "ゆったり", detail: "じっくり考える", selection_duration: 30, question_duration: 40, between_question_duration: 10 },
+] as const;
 
 function setupDraft(values: RoomSetup): RoomSetupDraft {
   return {
@@ -51,7 +58,7 @@ function SetupNumberInput({ label, hint, value, minimum, maximum, step, onChange
     const startingValue = hasValue ? numericValue : direction === 1 ? minimum - step : minimum;
     onChange(String(Math.min(maximum, Math.max(minimum, startingValue + direction * step))));
   }
-  return <div className="room-setup-field"><label htmlFor={inputId}>{label}</label><div className="number-stepper"><input id={inputId} type="number" inputMode="numeric" min={minimum} max={maximum} step={step} value={value} onChange={event => onChange(event.target.value)} onBlur={onBlur} required /><div className="number-stepper-controls"><button type="button" aria-label={`${label}を増やす`} disabled={hasValue && numericValue >= maximum} onMouseDown={event => event.preventDefault()} onClick={() => stepValue(1)}>▲</button><button type="button" aria-label={`${label}を減らす`} disabled={hasValue && numericValue <= minimum} onMouseDown={event => event.preventDefault()} onClick={() => stepValue(-1)}>▼</button></div></div><small>{hint}</small></div>;
+  return <div className="room-setup-field"><label htmlFor={inputId}>{label}</label><div className="number-stepper"><button type="button" className="number-stepper-button" aria-label={`${label}を減らす`} disabled={hasValue && numericValue <= minimum} onMouseDown={event => event.preventDefault()} onClick={() => stepValue(-1)}>−</button><input id={inputId} type="number" inputMode="numeric" min={minimum} max={maximum} step={step} value={value} onChange={event => onChange(event.target.value)} onBlur={onBlur} required /><button type="button" className="number-stepper-button" aria-label={`${label}を増やす`} disabled={hasValue && numericValue >= maximum} onMouseDown={event => event.preventDefault()} onClick={() => stepValue(1)}>＋</button></div><small>{hint}</small></div>;
 }
 
 function savedIdentity(): Identity | null {
@@ -86,6 +93,9 @@ export default function Home() {
   const [roomsRefreshing, setRoomsRefreshing] = useState(false);
   const [roomsLoaded, setRoomsLoaded] = useState(false);
   const [destination, setDestination] = useState<string>();
+  const [rulesOpen, setRulesOpen] = useState(false);
+  const [shareMessage, setShareMessage] = useState("");
+  const [gameUrl, setGameUrl] = useState("");
   const [roomSetupOpen, setRoomSetupOpen] = useState(false);
   const [roomSetup, setRoomSetup] = useState<RoomSetupDraft>(() => setupDraft(defaultRoomSetup));
   const [availableQuestionCount, setAvailableQuestionCount] = useState(3);
@@ -93,6 +103,11 @@ export default function Home() {
   const [roomEntryStep, setRoomEntryStep] = useState<"idle" | "creating" | "entering">("idle");
   const creatingIdentity = identityEntryStep !== "idle";
   const creatingRoom = roomEntryStep !== "idle";
+  const activeTempoPreset = tempoPresets.find(preset =>
+    roomSetup.selection_duration === String(preset.selection_duration)
+    && roomSetup.question_duration === String(preset.question_duration)
+    && roomSetup.between_question_duration === String(preset.between_question_duration)
+  )?.id;
   const { notice: roomExitNotice, clearNotice: clearRoomExitNotice } = useRoomExitNotice();
 
   function editSetup(field: keyof RoomSetupDraft, value: string) {
@@ -102,6 +117,15 @@ export default function Home() {
 
   function normalizeSetup(field: keyof RoomSetupDraft, minimum: number, maximum: number, step: number, fallback: number) {
     setRoomSetup(current => ({ ...current, [field]: normalizedNumber(current[field], minimum, maximum, step, fallback) }));
+  }
+
+  function applyTempoPreset(preset: (typeof tempoPresets)[number]) {
+    setRoomSetup(current => ({
+      ...current,
+      selection_duration: String(preset.selection_duration),
+      question_duration: String(preset.question_duration),
+      between_question_duration: String(preset.between_question_duration),
+    }));
   }
 
   async function loadRooms() {
@@ -155,6 +179,8 @@ export default function Home() {
     setIdentityResolved(true);
     const searchParams = new URLSearchParams(window.location.search);
     setDestination(searchParams.get("room")?.toUpperCase());
+    try { setGameUrl(new URL(configuredGameUrl || "/", window.location.origin).toString().replace(/\/$/, "")); }
+    catch { setGameUrl(window.location.origin); }
     loadRooms();
     void loadRoomOptions();
     const interval = window.setInterval(loadRooms, 5000);
@@ -194,6 +220,26 @@ export default function Home() {
   }
 
   function enterRoom(roomId: string) { router.push(`/room/${roomId}`); }
+
+  async function copyGameUrl() {
+    try {
+      await navigator.clipboard.writeText(gameUrl);
+      setShareMessage("ゲームトップのURLをコピーしました。");
+    } catch {
+      setShareMessage("URLをコピーできませんでした。アドレスバーのURLを長押ししてコピーしてください。");
+    }
+  }
+
+  async function shareGameUrl() {
+    setShareMessage("");
+    if (!navigator.share) { await copyGameUrl(); return; }
+    try {
+      await navigator.share({ title: "マジョリティ", text: "ゲームはこちらから参加できます。", url: gameUrl });
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      setShareMessage("共有できませんでした。もう一度お試しください。");
+    }
+  }
 
   async function createRoom(event: FormEvent) {
     event.preventDefault();
@@ -256,7 +302,7 @@ export default function Home() {
     {creatingIdentity && <div className="room-entry-overlay" role="dialog" aria-modal="true" aria-labelledby="identity-entry-title"><section className="card room-entry-progress"><span className="loading-orbit" aria-hidden="true" /><span className="step-label">初回参加を準備中</span><h2 id="identity-entry-title" aria-live="polite">{identityEntryStep === "creating-avatar" ? "プロフィール画像を作成しています" : "ロビーを準備しています"}</h2><ol><li className="done">ニックネームを確認</li><li className={identityEntryStep === "creating-avatar" ? "active" : "done"}>プロフィール画像を作成</li><li className={identityEntryStep === "entering" ? "active" : ""}>ロビーへ入場</li></ol><p>このままお待ちください。操作は必要ありません。</p></section></div>}
   </>;
 
-  return <><main id="main-content" className="lobby" inert={creatingRoom || roomSetupOpen || undefined} aria-busy={creatingRoom}>
+  return <><main id="main-content" className="lobby" inert={creatingRoom || roomSetupOpen || rulesOpen || undefined} aria-busy={creatingRoom}>
     <header className="page-heading lobby-heading">
       <div className="identity-summary">
         <a className="profile-avatar-link" href="/profile" aria-label="自分のプロフィールを開く">
@@ -265,15 +311,30 @@ export default function Home() {
         </a>
         <h1><PlayerName name={identity.username} /></h1>
       </div>
+      <div className="game-header-actions lobby-header-actions" aria-label="ロビーの案内">
+        <button type="button" className="secondary room-header-button room-rules-button" onClick={() => setRulesOpen(true)} aria-haspopup="dialog">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4.5h10a3 3 0 0 1 3 3V20H8a3 3 0 0 1-3-3V4.5Z" /><path d="M8 4.5V17a3 3 0 0 0 3 3M11 9h4M11 13h4" /></svg><span>ルール</span>
+        </button>
+        <button type="button" className="secondary room-header-button lobby-share-button" onClick={() => void shareGameUrl()} disabled={!gameUrl}>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="m8.6 10.5 6.8-4M8.6 13.5l6.8 4" /></svg><span>共有</span>
+        </button>
+      </div>
     </header>
+    {shareMessage && <p className="notice lobby-share-status" role="status">{shareMessage}</p>}
     {roomExitNotice && <p className="notice room-not-found-notice" role="alert"><strong>{roomExitNotice.title}</strong><span>{roomExitNotice.detail}</span></p>}
     {destination && <p className="notice" role="status">ルーム番号 {destination} を確認しました。下の一覧から参加してください。</p>}
-    <section className="card lobby-board" aria-labelledby="lobby-title">
+    <section className="card lobby-banner" aria-labelledby="lobby-actions-title">
       <div className="section-heading">
-        <div><span className="step-label">参加受付中</span><h2 id="lobby-title">参加するルームを選ぶ</h2><p className="muted room-refresh-status" aria-live="polite">{roomsRefreshing ? "ルームを更新しています…" : roomsLoaded ? "最新のルームを表示中 · 5秒ごとに自動更新" : "参加できるルームを確認しています…"}</p></div>
+        <div><span className="step-label">ロビーの操作</span><h2 id="lobby-actions-title">ルームを探す・作る</h2><p className="muted room-refresh-status" aria-live="polite">{roomsRefreshing ? "ルームを更新しています…" : roomsLoaded ? "5秒ごとに新しい情報へ自動更新します" : "参加できるルームを確認しています…"}</p></div>
         <div className="button-row lobby-actions"><button type="button" className="create-room-button" disabled={creatingRoom || availableQuestionCount < 1} onClick={() => setRoomSetupOpen(true)}><span aria-hidden="true">＋</span>{creatingRoom ? "作成中…" : "ルームを作成"}</button><button type="button" className={`refresh-room-button secondary${roomsRefreshing ? " is-refreshing" : ""}`} disabled={creatingRoom || roomsRefreshing} onClick={() => void refreshRooms()}><span aria-hidden="true">↻</span> {roomsRefreshing ? "更新中" : "更新"}</button></div>
       </div>
-      {rooms.length === 0 ? <div className="empty"><span className="empty-mark" aria-hidden="true">＋</span><div><h3>参加できるルームはまだありません</h3><p className="muted">新しいルームを作って、みんなを招待しましょう。</p></div></div> : <div className="room-list">{rooms.map(room => {
+    </section>
+    <section className="lobby-room-section" aria-labelledby="lobby-rooms-title">
+      <header className="lobby-room-heading">
+        <div><span className="step-label">参加先</span><h2 id="lobby-rooms-title">ルーム一覧</h2></div>
+        <span className="lobby-room-count" aria-label={`${rooms.length}件のルーム`}>{rooms.length}<small>件</small></span>
+      </header>
+      {rooms.length === 0 ? <div className="empty lobby-empty"><span className="empty-mark" aria-hidden="true">＋</span><div><h3>参加できるルームはまだありません</h3><p className="muted">新しいルームを作るか、待っている間に遊び方を確認できます。</p><button type="button" className="empty-rules-button" onClick={() => setRulesOpen(true)}>遊び方を見る</button></div></div> : <div className="room-list">{rooms.map(room => {
         const joinable = room.status === "WAITING" && room.player_count < room.max_players;
         return <article className="room-card" key={room.room_id}>
           <div className="room-code" aria-label={`ルーム番号 ${room.room_id}`}><small>ルーム</small><strong>{room.room_id}</strong></div>
@@ -285,14 +346,18 @@ export default function Home() {
     {message && <p className="error" role="alert">{message}</p>}
     <footer className="lobby-footer"><a href="/admin">管理者入口</a></footer>
   </main>
+    {rulesOpen && <BottomSheet open onClose={() => setRulesOpen(false)} labelledBy="lobby-rules-title" describedBy="lobby-rules-summary" closeLabel={gameRulesCopy.closeLabel} className="rules-sheet" header={<><span className="step-label">{gameRulesCopy.eyebrow}</span><h2 id="lobby-rules-title">{gameRulesCopy.title}</h2><p id="lobby-rules-summary" className="muted">{gameRulesCopy.summary}</p></>}><GameRules /></BottomSheet>}
     <BottomSheet open={roomSetupOpen} onClose={() => setRoomSetupOpen(false)} labelledBy="room-setup-title" describedBy="room-setup-summary" closeLabel="キャンセル" className="room-setup-sheet" header={<><span className="step-label">新しいルーム</span><h2 id="room-setup-title">ルーム設定を選ぶ</h2><p id="room-setup-summary" className="muted">遊ぶ人数とゲームのテンポを決めてください。</p></>}>
       <form className="room-setup-form" onSubmit={createRoom}>
         <div className="room-setup-grid">
           <SetupNumberInput label="ルームの定員" hint="範囲：2〜100人（オーナーを含む）" value={roomSetup.max_players} minimum={2} maximum={100} step={1} onChange={value => editSetup("max_players", value)} onBlur={() => normalizeSetup("max_players", 2, 100, 1, defaultRoomSetup.max_players)} />
           <SetupNumberInput label="ラウンド数" hint="1ラウンドで全員が1回ずつ親になります（1〜10ラウンド）" value={roomSetup.round_count} minimum={1} maximum={10} step={1} onChange={value => editSetup("round_count", value)} onBlur={() => normalizeSetup("round_count", 1, 10, 1, defaultRoomSetup.round_count)} />
-          <SetupNumberInput label="問題を選ぶ時間" hint="範囲：5〜60秒（5秒刻み、時間切れで自動選択）" value={roomSetup.selection_duration} minimum={5} maximum={60} step={5} onChange={value => editSetup("selection_duration", value)} onBlur={() => normalizeSetup("selection_duration", 5, 60, 5, defaultRoomSetup.selection_duration)} />
-          <SetupNumberInput label="回答時間" hint="範囲：10〜60秒（10秒刻み）" value={roomSetup.question_duration} minimum={10} maximum={60} step={10} onChange={value => editSetup("question_duration", value)} onBlur={() => normalizeSetup("question_duration", 10, 60, 10, defaultRoomSetup.question_duration)} />
-          <SetupNumberInput label="問題間の待ち時間" hint="範囲：5〜30秒（5秒刻み）" value={roomSetup.between_question_duration} minimum={5} maximum={30} step={5} onChange={value => editSetup("between_question_duration", value)} onBlur={() => normalizeSetup("between_question_duration", 5, 30, 5, defaultRoomSetup.between_question_duration)} />
+          <fieldset className="tempo-presets"><legend>ゲームのテンポ</legend><div>{tempoPresets.map(preset => <button key={preset.id} type="button" aria-pressed={activeTempoPreset === preset.id} onClick={() => applyTempoPreset(preset)}><strong>{preset.label}</strong><small>{preset.detail}</small></button>)}</div><p className="tempo-summary" role="status">問題選び {roomSetup.selection_duration || "—"}秒 · 回答 {roomSetup.question_duration || "—"}秒 · 問題間 {roomSetup.between_question_duration || "—"}秒</p></fieldset>
+          <details className="room-setup-advanced"><summary>秒数を細かく設定{activeTempoPreset ? "" : "（カスタム）"}</summary><div className="room-setup-timing-grid">
+            <SetupNumberInput label="問題を選ぶ時間" hint="5〜60秒・5秒刻み" value={roomSetup.selection_duration} minimum={5} maximum={60} step={5} onChange={value => editSetup("selection_duration", value)} onBlur={() => normalizeSetup("selection_duration", 5, 60, 5, defaultRoomSetup.selection_duration)} />
+            <SetupNumberInput label="回答時間" hint="10〜60秒・10秒刻み" value={roomSetup.question_duration} minimum={10} maximum={60} step={10} onChange={value => editSetup("question_duration", value)} onBlur={() => normalizeSetup("question_duration", 10, 60, 10, defaultRoomSetup.question_duration)} />
+            <SetupNumberInput label="問題間の待ち時間" hint="5〜30秒・5秒刻み" value={roomSetup.between_question_duration} minimum={5} maximum={30} step={5} onChange={value => editSetup("between_question_duration", value)} onBlur={() => normalizeSetup("between_question_duration", 5, 30, 5, defaultRoomSetup.between_question_duration)} />
+          </div></details>
         </div>
         <div className="button-row room-setup-actions"><button type="submit">この設定で作成</button></div>
       </form>
