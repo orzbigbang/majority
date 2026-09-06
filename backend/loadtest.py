@@ -7,6 +7,7 @@ import argparse
 import asyncio
 import json
 import math
+import random
 import subprocess
 import time
 from datetime import datetime, timezone
@@ -26,6 +27,15 @@ def stats(values):
         for name, q in [("p50_ms", .5), ("p95_ms", .95), ("p99_ms", .99), ("max_ms", 1)]}}
 
 
+def submission_plan(count, scenario, rng, turn):
+    """Offsets in seconds from the server's QUESTION phase, not receipt time."""
+    late = set(rng.sample(range(count), min(3, count))) if scenario == "deadline" else set()
+    changed = set(rng.sample(range(count), min(2, count))) if scenario == "mixed" and turn % 3 == 0 else set()
+    return [{"offset": 9 + rng.uniform(0, .15) if i in late else rng.uniform(1, 8),
+             "cohort": "late" if i in late else "spread", "change": i in changed}
+            for i in range(count)]
+
+
 class Player:
     def __init__(self, run, identity):
         self.run, self.identity = run, identity
@@ -39,7 +49,7 @@ class Player:
         self.closing = False
         self.state = {}
         query = urlencode({k: self.identity[k] for k in ("player_id", "session_id")})
-        self.ws = await connect(f"{self.run.ws_url}/ws/rooms/{self.run.room}?{query}", open_timeout=10)
+        self.ws = await connect(f"{self.run.ws_url}/ws/rooms/{self.run.room}?{query}", open_timeout=10, close_timeout=1)
         self.reader = asyncio.create_task(self.receive())
         await self.run.until(lambda: bool(self.state), "initial snapshot")
 
@@ -50,6 +60,7 @@ class Player:
                 kind, payload = message["type"], message["payload"]
                 if kind == "game_state":
                     self.state = payload
+                    self.state_received_at = time.perf_counter()
                     key = (payload["clock"]["revision"], payload["status"])
                     self.run.arrivals.setdefault(key, {}).setdefault(self.id, time.perf_counter())
                 elif kind == "answer_saved" and self.pending:
@@ -58,7 +69,8 @@ class Player:
                         if payload["choice"] != choice:
                             future.set_exception(AssertionError("wrong answer acknowledgement"))
                         else:
-                            self.run.latencies.append((time.perf_counter() - started) * 1000)
+                            self.last_ack_ms = (time.perf_counter() - started) * 1000
+                            self.run.latencies.append(self.last_ack_ms)
                             future.set_result(None)
                 elif kind == "error":
                     self.run.errors.append({"player": self.id, "error": payload})
@@ -101,6 +113,34 @@ class Run:
         self.completed = 0
         self.spreads = []
         self.burst_spans = []
+        self.rng = random.Random(args.seed)
+        self.submissions = []
+        self.draft_changes = 0
+
+    async def scheduled_answers(self, targets, question, choices, turn, parent_phase):
+        if parent_phase:
+            plan = [{"offset": self.rng.uniform(1, 2), "cohort": "parent", "change": False}]
+        else:
+            plan = submission_plan(len(targets), self.args.scenario, self.rng, turn)
+        async def submit(player, action):
+            clock = player.state["clock"]
+            origin = player.state_received_at - (clock["duration_ms"] - clock["remaining_ms"]) / 1000
+            async def at(offset):
+                await asyncio.sleep(max(0, origin + offset - time.perf_counter()))
+            if action["change"]:
+                await at(max(.1, action["offset"] - .7))
+                await player.send("select_answer", question_id=question,
+                                  choice="B" if choices[player.id] == "A" else "A")
+                self.draft_changes += 1
+            await at(action["offset"])
+            sample = {"turn": turn + 1, "player_id": player.id, "cohort": action["cohort"],
+                      "planned_offset_seconds": round(action["offset"], 3),
+                      "actual_offset_seconds": round(time.perf_counter() - origin, 3),
+                      "changed_draft": action["change"], "ack_ms": None}
+            self.submissions.append(sample)
+            await player.answer(question, choices[player.id])
+            sample["ack_ms"] = round(player.last_ack_ms, 3)
+        await asyncio.gather(*(submit(player, action) for player, action in zip(targets, plan)))
 
     async def until(self, predicate, label, timeout=30):
         async with asyncio.timeout(timeout):
@@ -155,7 +195,9 @@ class Run:
                     await self.until(lambda: all(p.state.get("status") == status and
                         p.state.get("current_question_index") == turn for p in self.players), "phase convergence")
                     if status == "SELECTING":
-                        if self.args.reconnect and turn == 0:
+                        if self.args.scenario == "mixed" and turn in {0, 6}:
+                            await self.reconnect([next(p for p in self.players if p != parent)])
+                        elif self.args.reconnect and turn == 0:
                             await self.reconnect([parent, *[p for p in self.players if p != parent][:2]])
                         await parent.send("select_question", question_id=state["question_options"][0]["id"])
                     else:
@@ -163,8 +205,11 @@ class Run:
                         choices = self.expected.setdefault(qid, {p.id: ("A" if (i + turn) % 3 else "B")
                                                                for i, p in enumerate(self.players)})
                         targets = [parent] if status == "PARENT_ANSWERING" else [p for p in self.players if p != parent]
-                        await asyncio.gather(*(p.answer(qid, choices[p.id]) for p in targets))
-                        if status == "QUESTION":
+                        if self.args.scenario == "burst":
+                            await asyncio.gather(*(p.answer(qid, choices[p.id]) for p in targets))
+                        else:
+                            await self.scheduled_answers(targets, qid, choices, turn, status == "PARENT_ANSWERING")
+                        if status == "QUESTION" and self.args.scenario == "burst":
                             self.burst_spans.append((max(p.last_sent for p in targets) - min(p.last_sent for p in targets)) * 1000)
                             # Opposite drafts after confirmation must not alter settlement.
                             await asyncio.gather(*(p.send("select_answer", question_id=qid,
@@ -215,9 +260,9 @@ class Run:
                         await self.game()
                     finally:
                         await asyncio.gather(*(p.close() for p in self.players), return_exceptions=True)
-                    spreads = [(max(x.values()) - min(x.values())) * 1000 for x in self.arrivals.values()
-                               if len(x) == self.args.players]
-                    self.spreads.extend(spreads)
+                        spreads = [(max(x.values()) - min(x.values())) * 1000 for x in self.arrivals.values()
+                                   if len(x) == self.args.players]
+                        self.spreads.extend(spreads)
         except Exception as exc:
             failure = f"{type(exc).__name__}: {exc}"
         server_check = {"checked": False}
@@ -239,18 +284,26 @@ class Run:
         gates = {"ack_p95": metrics["answer_ack"]["p95_ms"] is not None and metrics["answer_ack"]["p95_ms"] <= 500,
                  "ack_p99": metrics["answer_ack"]["p99_ms"] is not None and metrics["answer_ack"]["p99_ms"] <= 1000,
                  "spread_p95": metrics["phase_arrival_spread"]["p95_ms"] is not None and metrics["phase_arrival_spread"]["p95_ms"] <= 300,
-                 "burst_within_100ms": bool(self.burst_spans) and max(self.burst_spans) <= 100,
-                 "reconnect": not self.args.reconnect or bool(self.reconnect_ms) and max(self.reconnect_ms) <= 5000}
+                 "reconnect": not (self.args.reconnect or self.args.scenario == "mixed") or bool(self.reconnect_ms) and max(self.reconnect_ms) <= 5000}
+        if self.args.scenario == "burst":
+            gates["burst_within_100ms"] = bool(self.burst_spans) and max(self.burst_spans) <= 100
+        else:
+            gates["schedule_lag_under_100ms"] = bool(self.submissions) and all(
+                s["actual_offset_seconds"] - s["planned_offset_seconds"] <= .1 for s in self.submissions)
+        cohorts = {cohort: stats([s["ack_ms"] for s in self.submissions if s["cohort"] == cohort and s["ack_ms"] is not None])
+                   for cohort in ("parent", "spread", "late")}
         report = {"passed": not failure and not self.errors and all(gates.values()), "failure": failure,
                   "url": self.args.url, "players": self.args.players, "games_completed": self.completed,
                   "elapsed_seconds": round(time.perf_counter() - started, 2), "last_room": self.room,
                   "started_at": started_at, "server_logs": server_check,
+                  "scenario": self.args.scenario, "seed": self.args.seed,
+                  "cohort_ack": cohorts, "draft_changes": self.draft_changes, "submissions": self.submissions,
                   "metrics": metrics, "gates": gates, "errors": self.errors,
                   "planned_close_warnings": self.close_warnings,
                   "last_states": {p.id: {"status": p.state.get("status"), "turn": p.state.get("current_question_index")} for p in self.players}}
         self.args.output.parent.mkdir(parents=True, exist_ok=True)
         self.args.output.write_text(json.dumps(report, indent=2), encoding="utf-8")
-        print(json.dumps(report, indent=2), flush=True)
+        print(json.dumps({k: v for k, v in report.items() if k not in {"submissions", "last_states"}}, indent=2), flush=True)
         return 0 if report["passed"] else 1
 
 
@@ -261,11 +314,15 @@ def main():
     parser.add_argument("--games", type=int, default=1)
     parser.add_argument("--game-timeout", type=float, default=900)
     parser.add_argument("--reconnect", action="store_true")
+    parser.add_argument("--scenario", choices=("burst", "spread", "deadline", "mixed"), default="burst")
+    parser.add_argument("--seed", type=int, default=20260906)
     parser.add_argument("--container", help="Optional isolated Docker container; fail on server ERROR/traceback logs")
     parser.add_argument("--output", type=Path, default=Path("loadtest-report.json"))
     args = parser.parse_args()
     if args.games < 1 or args.game_timeout <= 0:
         parser.error("games and game-timeout must be positive")
+    if args.reconnect and args.scenario != "burst":
+        parser.error("--reconnect is for burst; mixed includes occasional reconnects")
     run = Run(args)
     raise SystemExit(asyncio.run(run.execute()))
 

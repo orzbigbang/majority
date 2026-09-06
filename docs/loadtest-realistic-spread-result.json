@@ -1,0 +1,1426 @@
+{
+  "passed": true,
+  "failure": null,
+  "url": "https://majority-git-cq56sbdefq-an.a.run.app",
+  "players": 12,
+  "games_completed": 1,
+  "elapsed_seconds": 317.37,
+  "last_room": "6P35",
+  "started_at": "2026-09-06T11:48:38.984734+00:00",
+  "server_logs": {
+    "checked": false
+  },
+  "scenario": "spread",
+  "seed": 20260906,
+  "cohort_ack": {
+    "parent": {
+      "count": 12,
+      "p50_ms": 107.69,
+      "p95_ms": 145.22,
+      "p99_ms": 145.22,
+      "max_ms": 145.22
+    },
+    "spread": {
+      "count": 132,
+      "p50_ms": 114.99,
+      "p95_ms": 183.62,
+      "p99_ms": 301.71,
+      "max_ms": 324.29
+    },
+    "late": {
+      "count": 0,
+      "p50_ms": null,
+      "p95_ms": null,
+      "p99_ms": null,
+      "max_ms": null
+    }
+  },
+  "draft_changes": 0,
+  "submissions": [
+    {
+      "turn": 1,
+      "player_id": "0df52a4e-1a35-4b64-b064-a3fc7f5fec84",
+      "cohort": "parent",
+      "planned_offset_seconds": 1.888,
+      "actual_offset_seconds": 1.897,
+      "changed_draft": false,
+      "ack_ms": 76.752
+    },
+    {
+      "turn": 1,
+      "player_id": "26dea41e-5019-454c-b4d9-f384e8ff31a7",
+      "cohort": "spread",
+      "planned_offset_seconds": 1.09,
+      "actual_offset_seconds": 1.098,
+      "changed_draft": false,
+      "ack_ms": 83.106
+    },
+    {
+      "turn": 1,
+      "player_id": "e126904a-34ce-43ec-9063-1d73e6d573ef",
+      "cohort": "spread",
+      "planned_offset_seconds": 1.274,
+      "actual_offset_seconds": 1.286,
+      "changed_draft": false,
+      "ack_ms": 101.532
+    },
+    {
+      "turn": 1,
+      "player_id": "c81f7fd3-1995-4659-bb9c-6be248082467",
+      "cohort": "spread",
+      "planned_offset_seconds": 2.39,
+      "actual_offset_seconds": 2.394,
+      "changed_draft": false,
+      "ack_ms": 84.838
+    },
+    {
+      "turn": 1,
+      "player_id": "cf42cdd4-c303-4e3b-ac28-a27a4b77eef4",
+      "cohort": "spread",
+      "planned_offset_seconds": 3.143,
+      "actual_offset_seconds": 3.146,
+      "changed_draft": false,
+      "ack_ms": 107.96
+    },
+    {
+      "turn": 1,
+      "player_id": "86e2bfcb-9799-461e-be2f-6ef201e011ea",
+      "cohort": "spread",
+      "planned_offset_seconds": 4.515,
+      "actual_offset_seconds": 4.523,
+      "changed_draft": false,
+      "ack_ms": 106.841
+    },
+    {
+      "turn": 1,
+      "player_id": "a69496eb-df87-4bf8-9386-8828c2ad1613",
+      "cohort": "spread",
+      "planned_offset_seconds": 5.093,
+      "actual_offset_seconds": 5.105,
+      "changed_draft": false,
+      "ack_ms": 84.549
+    },
+    {
+      "turn": 1,
+      "player_id": "55b648e2-d446-4732-952b-406c74b46628",
+      "cohort": "spread",
+      "planned_offset_seconds": 5.208,
+      "actual_offset_seconds": 5.216,
+      "changed_draft": false,
+      "ack_ms": 79.392
+    },
+    {
+      "turn": 1,
+      "player_id": "3b4c2479-1dcd-42d2-bb55-54b8402cfca7",
+      "cohort": "spread",
+      "planned_offset_seconds": 6.429,
+      "actual_offset_seconds": 6.44,
+      "changed_draft": false,
+      "ack_ms": 101.205
+    },
+    {
+      "turn": 1,
+      "player_id": "520f855b-2ba8-4269-a9c5-30b2777b399e",
+      "cohort": "spread",
+      "planned_offset_seconds": 7.02,
+      "actual_offset_seconds": 7.034,
+      "changed_draft": false,
+      "ack_ms": 108.74
+    },
+    {
+      "turn": 1,
+      "player_id": "3c0967af-e6a6-445e-8659-7533e59bb221",
+      "cohort": "spread",
+      "planned_offset_seconds": 7.219,
+      "actual_offset_seconds": 7.221,
+      "changed_draft": false,
+      "ack_ms": 80.067
+    },
+    {
+      "turn": 1,
+      "player_id": "fe2e78da-c0ed-49e1-976c-e3cc49818003",
+      "cohort": "spread",
+      "planned_offset_seconds": 7.559,
+      "actual_offset_seconds": 7.565,
+      "changed_draft": false,
+      "ack_ms": 84.878
+    },
+    {
+      "turn": 2,
+      "player_id": "e126904a-34ce-43ec-9063-1d73e6d573ef",
+      "cohort": "parent",
+      "planned_offset_seconds": 1.3,
+      "actual_offset_seconds": 1.316,
+      "changed_draft": false,
+      "ack_ms": 85.867
+    },
+    {
+      "turn": 2,
+      "player_id": "a69496eb-df87-4bf8-9386-8828c2ad1613",
+      "cohort": "spread",
+      "planned_offset_seconds": 1.368,
+      "actual_offset_seconds": 1.372,
+      "changed_draft": false,
+      "ack_ms": 75.118
+    },
+    {
+      "turn": 2,
+      "player_id": "c81f7fd3-1995-4659-bb9c-6be248082467",
+      "cohort": "spread",
+      "planned_offset_seconds": 1.552,
+      "actual_offset_seconds": 1.559,
+      "changed_draft": false,
+      "ack_ms": 123.942
+    },
+    {
+      "turn": 2,
+      "player_id": "0df52a4e-1a35-4b64-b064-a3fc7f5fec84",
+      "cohort": "spread",
+      "planned_offset_seconds": 1.829,
+      "actual_offset_seconds": 1.839,
+      "changed_draft": false,
+      "ack_ms": 97.144
+    },
+    {
+      "turn": 2,
+      "player_id": "26dea41e-5019-454c-b4d9-f384e8ff31a7",
+      "cohort": "spread",
+      "planned_offset_seconds": 2.185,
+      "actual_offset_seconds": 2.196,
+      "changed_draft": false,
+      "ack_ms": 126.082
+    },
+    {
+      "turn": 2,
+      "player_id": "86e2bfcb-9799-461e-be2f-6ef201e011ea",
+      "cohort": "spread",
+      "planned_offset_seconds": 2.642,
+      "actual_offset_seconds": 2.653,
+      "changed_draft": false,
+      "ack_ms": 103.297
+    },
+    {
+      "turn": 2,
+      "player_id": "520f855b-2ba8-4269-a9c5-30b2777b399e",
+      "cohort": "spread",
+      "planned_offset_seconds": 2.814,
+      "actual_offset_seconds": 2.826,
+      "changed_draft": false,
+      "ack_ms": 98.253
+    },
+    {
+      "turn": 2,
+      "player_id": "cf42cdd4-c303-4e3b-ac28-a27a4b77eef4",
+      "cohort": "spread",
+      "planned_offset_seconds": 5.74,
+      "actual_offset_seconds": 5.741,
+      "changed_draft": false,
+      "ack_ms": 91.283
+    },
+    {
+      "turn": 2,
+      "player_id": "fe2e78da-c0ed-49e1-976c-e3cc49818003",
+      "cohort": "spread",
+      "planned_offset_seconds": 5.966,
+      "actual_offset_seconds": 5.976,
+      "changed_draft": false,
+      "ack_ms": 126.355
+    },
+    {
+      "turn": 2,
+      "player_id": "3c0967af-e6a6-445e-8659-7533e59bb221",
+      "cohort": "spread",
+      "planned_offset_seconds": 6.057,
+      "actual_offset_seconds": 6.07,
+      "changed_draft": false,
+      "ack_ms": 118.499
+    },
+    {
+      "turn": 2,
+      "player_id": "55b648e2-d446-4732-952b-406c74b46628",
+      "cohort": "spread",
+      "planned_offset_seconds": 7.18,
+      "actual_offset_seconds": 7.19,
+      "changed_draft": false,
+      "ack_ms": 111.424
+    },
+    {
+      "turn": 2,
+      "player_id": "3b4c2479-1dcd-42d2-bb55-54b8402cfca7",
+      "cohort": "spread",
+      "planned_offset_seconds": 7.267,
+      "actual_offset_seconds": 7.268,
+      "changed_draft": false,
+      "ack_ms": 134.456
+    },
+    {
+      "turn": 3,
+      "player_id": "cf42cdd4-c303-4e3b-ac28-a27a4b77eef4",
+      "cohort": "parent",
+      "planned_offset_seconds": 1.057,
+      "actual_offset_seconds": 1.071,
+      "changed_draft": false,
+      "ack_ms": 112.393
+    },
+    {
+      "turn": 3,
+      "player_id": "3b4c2479-1dcd-42d2-bb55-54b8402cfca7",
+      "cohort": "spread",
+      "planned_offset_seconds": 1.33,
+      "actual_offset_seconds": 1.334,
+      "changed_draft": false,
+      "ack_ms": 89.784
+    },
+    {
+      "turn": 3,
+      "player_id": "a69496eb-df87-4bf8-9386-8828c2ad1613",
+      "cohort": "spread",
+      "planned_offset_seconds": 2.309,
+      "actual_offset_seconds": 2.319,
+      "changed_draft": false,
+      "ack_ms": 97.554
+    },
+    {
+      "turn": 3,
+      "player_id": "e126904a-34ce-43ec-9063-1d73e6d573ef",
+      "cohort": "spread",
+      "planned_offset_seconds": 2.682,
+      "actual_offset_seconds": 2.695,
+      "changed_draft": false,
+      "ack_ms": 90.979
+    },
+    {
+      "turn": 3,
+      "player_id": "0df52a4e-1a35-4b64-b064-a3fc7f5fec84",
+      "cohort": "spread",
+      "planned_offset_seconds": 4.44,
+      "actual_offset_seconds": 4.456,
+      "changed_draft": false,
+      "ack_ms": 87.727
+    },
+    {
+      "turn": 3,
+      "player_id": "520f855b-2ba8-4269-a9c5-30b2777b399e",
+      "cohort": "spread",
+      "planned_offset_seconds": 4.856,
+      "actual_offset_seconds": 4.866,
+      "changed_draft": false,
+      "ack_ms": 105.145
+    },
+    {
+      "turn": 3,
+      "player_id": "55b648e2-d446-4732-952b-406c74b46628",
+      "cohort": "spread",
+      "planned_offset_seconds": 5.92,
+      "actual_offset_seconds": 5.929,
+      "changed_draft": false,
+      "ack_ms": 92.474
+    },
+    {
+      "turn": 3,
+      "player_id": "fe2e78da-c0ed-49e1-976c-e3cc49818003",
+      "cohort": "spread",
+      "planned_offset_seconds": 6.239,
+      "actual_offset_seconds": 6.244,
+      "changed_draft": false,
+      "ack_ms": 84.549
+    },
+    {
+      "turn": 3,
+      "player_id": "86e2bfcb-9799-461e-be2f-6ef201e011ea",
+      "cohort": "spread",
+      "planned_offset_seconds": 6.921,
+      "actual_offset_seconds": 6.931,
+      "changed_draft": false,
+      "ack_ms": 117.729
+    },
+    {
+      "turn": 3,
+      "player_id": "c81f7fd3-1995-4659-bb9c-6be248082467",
+      "cohort": "spread",
+      "planned_offset_seconds": 7.199,
+      "actual_offset_seconds": 7.214,
+      "changed_draft": false,
+      "ack_ms": 134.363
+    },
+    {
+      "turn": 3,
+      "player_id": "26dea41e-5019-454c-b4d9-f384e8ff31a7",
+      "cohort": "spread",
+      "planned_offset_seconds": 7.707,
+      "actual_offset_seconds": 7.715,
+      "changed_draft": false,
+      "ack_ms": 126.594
+    },
+    {
+      "turn": 3,
+      "player_id": "3c0967af-e6a6-445e-8659-7533e59bb221",
+      "cohort": "spread",
+      "planned_offset_seconds": 7.874,
+      "actual_offset_seconds": 7.885,
+      "changed_draft": false,
+      "ack_ms": 98.758
+    },
+    {
+      "turn": 4,
+      "player_id": "86e2bfcb-9799-461e-be2f-6ef201e011ea",
+      "cohort": "parent",
+      "planned_offset_seconds": 1.829,
+      "actual_offset_seconds": 1.834,
+      "changed_draft": false,
+      "ack_ms": 83.165
+    },
+    {
+      "turn": 4,
+      "player_id": "e126904a-34ce-43ec-9063-1d73e6d573ef",
+      "cohort": "spread",
+      "planned_offset_seconds": 1.271,
+      "actual_offset_seconds": 1.273,
+      "changed_draft": false,
+      "ack_ms": 113.791
+    },
+    {
+      "turn": 4,
+      "player_id": "3b4c2479-1dcd-42d2-bb55-54b8402cfca7",
+      "cohort": "spread",
+      "planned_offset_seconds": 2.342,
+      "actual_offset_seconds": 2.351,
+      "changed_draft": false,
+      "ack_ms": 125.523
+    },
+    {
+      "turn": 4,
+      "player_id": "fe2e78da-c0ed-49e1-976c-e3cc49818003",
+      "cohort": "spread",
+      "planned_offset_seconds": 2.529,
+      "actual_offset_seconds": 2.54,
+      "changed_draft": false,
+      "ack_ms": 108.46
+    },
+    {
+      "turn": 4,
+      "player_id": "26dea41e-5019-454c-b4d9-f384e8ff31a7",
+      "cohort": "spread",
+      "planned_offset_seconds": 3.159,
+      "actual_offset_seconds": 3.167,
+      "changed_draft": false,
+      "ack_ms": 109.989
+    },
+    {
+      "turn": 4,
+      "player_id": "cf42cdd4-c303-4e3b-ac28-a27a4b77eef4",
+      "cohort": "spread",
+      "planned_offset_seconds": 3.675,
+      "actual_offset_seconds": 3.681,
+      "changed_draft": false,
+      "ack_ms": 111.143
+    },
+    {
+      "turn": 4,
+      "player_id": "55b648e2-d446-4732-952b-406c74b46628",
+      "cohort": "spread",
+      "planned_offset_seconds": 3.855,
+      "actual_offset_seconds": 3.867,
+      "changed_draft": false,
+      "ack_ms": 101.574
+    },
+    {
+      "turn": 4,
+      "player_id": "a69496eb-df87-4bf8-9386-8828c2ad1613",
+      "cohort": "spread",
+      "planned_offset_seconds": 4.511,
+      "actual_offset_seconds": 4.524,
+      "changed_draft": false,
+      "ack_ms": 105.214
+    },
+    {
+      "turn": 4,
+      "player_id": "c81f7fd3-1995-4659-bb9c-6be248082467",
+      "cohort": "spread",
+      "planned_offset_seconds": 5.88,
+      "actual_offset_seconds": 5.883,
+      "changed_draft": false,
+      "ack_ms": 91.277
+    },
+    {
+      "turn": 4,
+      "player_id": "520f855b-2ba8-4269-a9c5-30b2777b399e",
+      "cohort": "spread",
+      "planned_offset_seconds": 6.942,
+      "actual_offset_seconds": 6.955,
+      "changed_draft": false,
+      "ack_ms": 93.932
+    },
+    {
+      "turn": 4,
+      "player_id": "3c0967af-e6a6-445e-8659-7533e59bb221",
+      "cohort": "spread",
+      "planned_offset_seconds": 7.135,
+      "actual_offset_seconds": 7.143,
+      "changed_draft": false,
+      "ack_ms": 146.315
+    },
+    {
+      "turn": 4,
+      "player_id": "0df52a4e-1a35-4b64-b064-a3fc7f5fec84",
+      "cohort": "spread",
+      "planned_offset_seconds": 7.911,
+      "actual_offset_seconds": 7.923,
+      "changed_draft": false,
+      "ack_ms": 110.703
+    },
+    {
+      "turn": 5,
+      "player_id": "fe2e78da-c0ed-49e1-976c-e3cc49818003",
+      "cohort": "parent",
+      "planned_offset_seconds": 1.632,
+      "actual_offset_seconds": 1.637,
+      "changed_draft": false,
+      "ack_ms": 106.866
+    },
+    {
+      "turn": 5,
+      "player_id": "0df52a4e-1a35-4b64-b064-a3fc7f5fec84",
+      "cohort": "spread",
+      "planned_offset_seconds": 3.052,
+      "actual_offset_seconds": 3.057,
+      "changed_draft": false,
+      "ack_ms": 91.69
+    },
+    {
+      "turn": 5,
+      "player_id": "cf42cdd4-c303-4e3b-ac28-a27a4b77eef4",
+      "cohort": "spread",
+      "planned_offset_seconds": 3.96,
+      "actual_offset_seconds": 3.976,
+      "changed_draft": false,
+      "ack_ms": 103.009
+    },
+    {
+      "turn": 5,
+      "player_id": "3b4c2479-1dcd-42d2-bb55-54b8402cfca7",
+      "cohort": "spread",
+      "planned_offset_seconds": 4.183,
+      "actual_offset_seconds": 4.196,
+      "changed_draft": false,
+      "ack_ms": 92.981
+    },
+    {
+      "turn": 5,
+      "player_id": "3c0967af-e6a6-445e-8659-7533e59bb221",
+      "cohort": "spread",
+      "planned_offset_seconds": 4.536,
+      "actual_offset_seconds": 4.538,
+      "changed_draft": false,
+      "ack_ms": 324.288
+    },
+    {
+      "turn": 5,
+      "player_id": "a69496eb-df87-4bf8-9386-8828c2ad1613",
+      "cohort": "spread",
+      "planned_offset_seconds": 5.082,
+      "actual_offset_seconds": 5.088,
+      "changed_draft": false,
+      "ack_ms": 96.429
+    },
+    {
+      "turn": 5,
+      "player_id": "c81f7fd3-1995-4659-bb9c-6be248082467",
+      "cohort": "spread",
+      "planned_offset_seconds": 5.366,
+      "actual_offset_seconds": 5.369,
+      "changed_draft": false,
+      "ack_ms": 116.6
+    },
+    {
+      "turn": 5,
+      "player_id": "55b648e2-d446-4732-952b-406c74b46628",
+      "cohort": "spread",
+      "planned_offset_seconds": 5.779,
+      "actual_offset_seconds": 5.789,
+      "changed_draft": false,
+      "ack_ms": 107.835
+    },
+    {
+      "turn": 5,
+      "player_id": "26dea41e-5019-454c-b4d9-f384e8ff31a7",
+      "cohort": "spread",
+      "planned_offset_seconds": 5.881,
+      "actual_offset_seconds": 5.882,
+      "changed_draft": false,
+      "ack_ms": 134.51
+    },
+    {
+      "turn": 5,
+      "player_id": "520f855b-2ba8-4269-a9c5-30b2777b399e",
+      "cohort": "spread",
+      "planned_offset_seconds": 5.964,
+      "actual_offset_seconds": 5.977,
+      "changed_draft": false,
+      "ack_ms": 172.603
+    },
+    {
+      "turn": 5,
+      "player_id": "86e2bfcb-9799-461e-be2f-6ef201e011ea",
+      "cohort": "spread",
+      "planned_offset_seconds": 6.047,
+      "actual_offset_seconds": 6.055,
+      "changed_draft": false,
+      "ack_ms": 194.58
+    },
+    {
+      "turn": 5,
+      "player_id": "e126904a-34ce-43ec-9063-1d73e6d573ef",
+      "cohort": "spread",
+      "planned_offset_seconds": 7.274,
+      "actual_offset_seconds": 7.278,
+      "changed_draft": false,
+      "ack_ms": 118.006
+    },
+    {
+      "turn": 6,
+      "player_id": "a69496eb-df87-4bf8-9386-8828c2ad1613",
+      "cohort": "parent",
+      "planned_offset_seconds": 1.113,
+      "actual_offset_seconds": 1.116,
+      "changed_draft": false,
+      "ack_ms": 107.691
+    },
+    {
+      "turn": 6,
+      "player_id": "cf42cdd4-c303-4e3b-ac28-a27a4b77eef4",
+      "cohort": "spread",
+      "planned_offset_seconds": 1.205,
+      "actual_offset_seconds": 1.21,
+      "changed_draft": false,
+      "ack_ms": 103.077
+    },
+    {
+      "turn": 6,
+      "player_id": "e126904a-34ce-43ec-9063-1d73e6d573ef",
+      "cohort": "spread",
+      "planned_offset_seconds": 1.595,
+      "actual_offset_seconds": 1.599,
+      "changed_draft": false,
+      "ack_ms": 103.559
+    },
+    {
+      "turn": 6,
+      "player_id": "c81f7fd3-1995-4659-bb9c-6be248082467",
+      "cohort": "spread",
+      "planned_offset_seconds": 2.345,
+      "actual_offset_seconds": 2.346,
+      "changed_draft": false,
+      "ack_ms": 173.623
+    },
+    {
+      "turn": 6,
+      "player_id": "0df52a4e-1a35-4b64-b064-a3fc7f5fec84",
+      "cohort": "spread",
+      "planned_offset_seconds": 2.784,
+      "actual_offset_seconds": 2.798,
+      "changed_draft": false,
+      "ack_ms": 100.82
+    },
+    {
+      "turn": 6,
+      "player_id": "55b648e2-d446-4732-952b-406c74b46628",
+      "cohort": "spread",
+      "planned_offset_seconds": 3.675,
+      "actual_offset_seconds": 3.685,
+      "changed_draft": false,
+      "ack_ms": 103.453
+    },
+    {
+      "turn": 6,
+      "player_id": "520f855b-2ba8-4269-a9c5-30b2777b399e",
+      "cohort": "spread",
+      "planned_offset_seconds": 3.9,
+      "actual_offset_seconds": 3.903,
+      "changed_draft": false,
+      "ack_ms": 111.99
+    },
+    {
+      "turn": 6,
+      "player_id": "86e2bfcb-9799-461e-be2f-6ef201e011ea",
+      "cohort": "spread",
+      "planned_offset_seconds": 4.236,
+      "actual_offset_seconds": 4.244,
+      "changed_draft": false,
+      "ack_ms": 100.999
+    },
+    {
+      "turn": 6,
+      "player_id": "3b4c2479-1dcd-42d2-bb55-54b8402cfca7",
+      "cohort": "spread",
+      "planned_offset_seconds": 5.831,
+      "actual_offset_seconds": 5.843,
+      "changed_draft": false,
+      "ack_ms": 120.601
+    },
+    {
+      "turn": 6,
+      "player_id": "3c0967af-e6a6-445e-8659-7533e59bb221",
+      "cohort": "spread",
+      "planned_offset_seconds": 6.231,
+      "actual_offset_seconds": 6.236,
+      "changed_draft": false,
+      "ack_ms": 117.02
+    },
+    {
+      "turn": 6,
+      "player_id": "26dea41e-5019-454c-b4d9-f384e8ff31a7",
+      "cohort": "spread",
+      "planned_offset_seconds": 6.692,
+      "actual_offset_seconds": 6.7,
+      "changed_draft": false,
+      "ack_ms": 112.837
+    },
+    {
+      "turn": 6,
+      "player_id": "fe2e78da-c0ed-49e1-976c-e3cc49818003",
+      "cohort": "spread",
+      "planned_offset_seconds": 7.326,
+      "actual_offset_seconds": 7.337,
+      "changed_draft": false,
+      "ack_ms": 101.194
+    },
+    {
+      "turn": 7,
+      "player_id": "55b648e2-d446-4732-952b-406c74b46628",
+      "cohort": "parent",
+      "planned_offset_seconds": 1.774,
+      "actual_offset_seconds": 1.783,
+      "changed_draft": false,
+      "ack_ms": 99.558
+    },
+    {
+      "turn": 7,
+      "player_id": "a69496eb-df87-4bf8-9386-8828c2ad1613",
+      "cohort": "spread",
+      "planned_offset_seconds": 1.145,
+      "actual_offset_seconds": 1.159,
+      "changed_draft": false,
+      "ack_ms": 105.419
+    },
+    {
+      "turn": 7,
+      "player_id": "86e2bfcb-9799-461e-be2f-6ef201e011ea",
+      "cohort": "spread",
+      "planned_offset_seconds": 1.306,
+      "actual_offset_seconds": 1.316,
+      "changed_draft": false,
+      "ack_ms": 98.158
+    },
+    {
+      "turn": 7,
+      "player_id": "0df52a4e-1a35-4b64-b064-a3fc7f5fec84",
+      "cohort": "spread",
+      "planned_offset_seconds": 1.403,
+      "actual_offset_seconds": 1.411,
+      "changed_draft": false,
+      "ack_ms": 107.494
+    },
+    {
+      "turn": 7,
+      "player_id": "c81f7fd3-1995-4659-bb9c-6be248082467",
+      "cohort": "spread",
+      "planned_offset_seconds": 2.037,
+      "actual_offset_seconds": 2.046,
+      "changed_draft": false,
+      "ack_ms": 105.807
+    },
+    {
+      "turn": 7,
+      "player_id": "cf42cdd4-c303-4e3b-ac28-a27a4b77eef4",
+      "cohort": "spread",
+      "planned_offset_seconds": 3.422,
+      "actual_offset_seconds": 3.436,
+      "changed_draft": false,
+      "ack_ms": 113.764
+    },
+    {
+      "turn": 7,
+      "player_id": "3c0967af-e6a6-445e-8659-7533e59bb221",
+      "cohort": "spread",
+      "planned_offset_seconds": 3.51,
+      "actual_offset_seconds": 3.513,
+      "changed_draft": false,
+      "ack_ms": 136.977
+    },
+    {
+      "turn": 7,
+      "player_id": "26dea41e-5019-454c-b4d9-f384e8ff31a7",
+      "cohort": "spread",
+      "planned_offset_seconds": 4.367,
+      "actual_offset_seconds": 4.369,
+      "changed_draft": false,
+      "ack_ms": 115.526
+    },
+    {
+      "turn": 7,
+      "player_id": "fe2e78da-c0ed-49e1-976c-e3cc49818003",
+      "cohort": "spread",
+      "planned_offset_seconds": 4.48,
+      "actual_offset_seconds": 4.484,
+      "changed_draft": false,
+      "ack_ms": 124.646
+    },
+    {
+      "turn": 7,
+      "player_id": "3b4c2479-1dcd-42d2-bb55-54b8402cfca7",
+      "cohort": "spread",
+      "planned_offset_seconds": 5.389,
+      "actual_offset_seconds": 5.392,
+      "changed_draft": false,
+      "ack_ms": 112.473
+    },
+    {
+      "turn": 7,
+      "player_id": "520f855b-2ba8-4269-a9c5-30b2777b399e",
+      "cohort": "spread",
+      "planned_offset_seconds": 5.427,
+      "actual_offset_seconds": 5.442,
+      "changed_draft": false,
+      "ack_ms": 174.026
+    },
+    {
+      "turn": 7,
+      "player_id": "e126904a-34ce-43ec-9063-1d73e6d573ef",
+      "cohort": "spread",
+      "planned_offset_seconds": 7.695,
+      "actual_offset_seconds": 7.708,
+      "changed_draft": false,
+      "ack_ms": 125.01
+    },
+    {
+      "turn": 8,
+      "player_id": "3b4c2479-1dcd-42d2-bb55-54b8402cfca7",
+      "cohort": "parent",
+      "planned_offset_seconds": 1.907,
+      "actual_offset_seconds": 1.918,
+      "changed_draft": false,
+      "ack_ms": 111.973
+    },
+    {
+      "turn": 8,
+      "player_id": "520f855b-2ba8-4269-a9c5-30b2777b399e",
+      "cohort": "spread",
+      "planned_offset_seconds": 1.351,
+      "actual_offset_seconds": 1.365,
+      "changed_draft": false,
+      "ack_ms": 128.747
+    },
+    {
+      "turn": 8,
+      "player_id": "86e2bfcb-9799-461e-be2f-6ef201e011ea",
+      "cohort": "spread",
+      "planned_offset_seconds": 1.443,
+      "actual_offset_seconds": 1.445,
+      "changed_draft": false,
+      "ack_ms": 182.369
+    },
+    {
+      "turn": 8,
+      "player_id": "0df52a4e-1a35-4b64-b064-a3fc7f5fec84",
+      "cohort": "spread",
+      "planned_offset_seconds": 1.504,
+      "actual_offset_seconds": 1.507,
+      "changed_draft": false,
+      "ack_ms": 218.454
+    },
+    {
+      "turn": 8,
+      "player_id": "a69496eb-df87-4bf8-9386-8828c2ad1613",
+      "cohort": "spread",
+      "planned_offset_seconds": 1.795,
+      "actual_offset_seconds": 1.801,
+      "changed_draft": false,
+      "ack_ms": 198.755
+    },
+    {
+      "turn": 8,
+      "player_id": "55b648e2-d446-4732-952b-406c74b46628",
+      "cohort": "spread",
+      "planned_offset_seconds": 2.594,
+      "actual_offset_seconds": 2.598,
+      "changed_draft": false,
+      "ack_ms": 108.439
+    },
+    {
+      "turn": 8,
+      "player_id": "cf42cdd4-c303-4e3b-ac28-a27a4b77eef4",
+      "cohort": "spread",
+      "planned_offset_seconds": 5.317,
+      "actual_offset_seconds": 5.319,
+      "changed_draft": false,
+      "ack_ms": 124.764
+    },
+    {
+      "turn": 8,
+      "player_id": "26dea41e-5019-454c-b4d9-f384e8ff31a7",
+      "cohort": "spread",
+      "planned_offset_seconds": 5.403,
+      "actual_offset_seconds": 5.41,
+      "changed_draft": false,
+      "ack_ms": 162.137
+    },
+    {
+      "turn": 8,
+      "player_id": "c81f7fd3-1995-4659-bb9c-6be248082467",
+      "cohort": "spread",
+      "planned_offset_seconds": 7.392,
+      "actual_offset_seconds": 7.394,
+      "changed_draft": false,
+      "ack_ms": 126.077
+    },
+    {
+      "turn": 8,
+      "player_id": "3c0967af-e6a6-445e-8659-7533e59bb221",
+      "cohort": "spread",
+      "planned_offset_seconds": 7.431,
+      "actual_offset_seconds": 7.44,
+      "changed_draft": false,
+      "ack_ms": 181.827
+    },
+    {
+      "turn": 8,
+      "player_id": "e126904a-34ce-43ec-9063-1d73e6d573ef",
+      "cohort": "spread",
+      "planned_offset_seconds": 7.433,
+      "actual_offset_seconds": 7.438,
+      "changed_draft": false,
+      "ack_ms": 301.715
+    },
+    {
+      "turn": 8,
+      "player_id": "fe2e78da-c0ed-49e1-976c-e3cc49818003",
+      "cohort": "spread",
+      "planned_offset_seconds": 7.639,
+      "actual_offset_seconds": 7.643,
+      "changed_draft": false,
+      "ack_ms": 210.325
+    },
+    {
+      "turn": 9,
+      "player_id": "26dea41e-5019-454c-b4d9-f384e8ff31a7",
+      "cohort": "parent",
+      "planned_offset_seconds": 1.995,
+      "actual_offset_seconds": 1.998,
+      "changed_draft": false,
+      "ack_ms": 111.534
+    },
+    {
+      "turn": 9,
+      "player_id": "e126904a-34ce-43ec-9063-1d73e6d573ef",
+      "cohort": "spread",
+      "planned_offset_seconds": 1.04,
+      "actual_offset_seconds": 1.048,
+      "changed_draft": false,
+      "ack_ms": 117.855
+    },
+    {
+      "turn": 9,
+      "player_id": "0df52a4e-1a35-4b64-b064-a3fc7f5fec84",
+      "cohort": "spread",
+      "planned_offset_seconds": 1.433,
+      "actual_offset_seconds": 1.44,
+      "changed_draft": false,
+      "ack_ms": 121.387
+    },
+    {
+      "turn": 9,
+      "player_id": "fe2e78da-c0ed-49e1-976c-e3cc49818003",
+      "cohort": "spread",
+      "planned_offset_seconds": 2.812,
+      "actual_offset_seconds": 2.813,
+      "changed_draft": false,
+      "ack_ms": 108.087
+    },
+    {
+      "turn": 9,
+      "player_id": "3b4c2479-1dcd-42d2-bb55-54b8402cfca7",
+      "cohort": "spread",
+      "planned_offset_seconds": 3.81,
+      "actual_offset_seconds": 3.814,
+      "changed_draft": false,
+      "ack_ms": 112.917
+    },
+    {
+      "turn": 9,
+      "player_id": "a69496eb-df87-4bf8-9386-8828c2ad1613",
+      "cohort": "spread",
+      "planned_offset_seconds": 4.481,
+      "actual_offset_seconds": 4.486,
+      "changed_draft": false,
+      "ack_ms": 123.286
+    },
+    {
+      "turn": 9,
+      "player_id": "c81f7fd3-1995-4659-bb9c-6be248082467",
+      "cohort": "spread",
+      "planned_offset_seconds": 4.781,
+      "actual_offset_seconds": 4.782,
+      "changed_draft": false,
+      "ack_ms": 106.255
+    },
+    {
+      "turn": 9,
+      "player_id": "cf42cdd4-c303-4e3b-ac28-a27a4b77eef4",
+      "cohort": "spread",
+      "planned_offset_seconds": 4.941,
+      "actual_offset_seconds": 4.954,
+      "changed_draft": false,
+      "ack_ms": 115.989
+    },
+    {
+      "turn": 9,
+      "player_id": "3c0967af-e6a6-445e-8659-7533e59bb221",
+      "cohort": "spread",
+      "planned_offset_seconds": 6.204,
+      "actual_offset_seconds": 6.213,
+      "changed_draft": false,
+      "ack_ms": 126.45
+    },
+    {
+      "turn": 9,
+      "player_id": "520f855b-2ba8-4269-a9c5-30b2777b399e",
+      "cohort": "spread",
+      "planned_offset_seconds": 6.836,
+      "actual_offset_seconds": 6.838,
+      "changed_draft": false,
+      "ack_ms": 127.169
+    },
+    {
+      "turn": 9,
+      "player_id": "86e2bfcb-9799-461e-be2f-6ef201e011ea",
+      "cohort": "spread",
+      "planned_offset_seconds": 7.024,
+      "actual_offset_seconds": 7.024,
+      "changed_draft": false,
+      "ack_ms": 116.877
+    },
+    {
+      "turn": 9,
+      "player_id": "55b648e2-d446-4732-952b-406c74b46628",
+      "cohort": "spread",
+      "planned_offset_seconds": 7.077,
+      "actual_offset_seconds": 7.086,
+      "changed_draft": false,
+      "ack_ms": 176.056
+    },
+    {
+      "turn": 10,
+      "player_id": "520f855b-2ba8-4269-a9c5-30b2777b399e",
+      "cohort": "parent",
+      "planned_offset_seconds": 1.777,
+      "actual_offset_seconds": 1.784,
+      "changed_draft": false,
+      "ack_ms": 121.284
+    },
+    {
+      "turn": 10,
+      "player_id": "0df52a4e-1a35-4b64-b064-a3fc7f5fec84",
+      "cohort": "spread",
+      "planned_offset_seconds": 1.343,
+      "actual_offset_seconds": 1.344,
+      "changed_draft": false,
+      "ack_ms": 113.316
+    },
+    {
+      "turn": 10,
+      "player_id": "86e2bfcb-9799-461e-be2f-6ef201e011ea",
+      "cohort": "spread",
+      "planned_offset_seconds": 2.134,
+      "actual_offset_seconds": 2.144,
+      "changed_draft": false,
+      "ack_ms": 112.929
+    },
+    {
+      "turn": 10,
+      "player_id": "a69496eb-df87-4bf8-9386-8828c2ad1613",
+      "cohort": "spread",
+      "planned_offset_seconds": 2.329,
+      "actual_offset_seconds": 2.332,
+      "changed_draft": false,
+      "ack_ms": 125.107
+    },
+    {
+      "turn": 10,
+      "player_id": "cf42cdd4-c303-4e3b-ac28-a27a4b77eef4",
+      "cohort": "spread",
+      "planned_offset_seconds": 2.499,
+      "actual_offset_seconds": 2.505,
+      "changed_draft": false,
+      "ack_ms": 118.581
+    },
+    {
+      "turn": 10,
+      "player_id": "3b4c2479-1dcd-42d2-bb55-54b8402cfca7",
+      "cohort": "spread",
+      "planned_offset_seconds": 3.023,
+      "actual_offset_seconds": 3.034,
+      "changed_draft": false,
+      "ack_ms": 129.097
+    },
+    {
+      "turn": 10,
+      "player_id": "55b648e2-d446-4732-952b-406c74b46628",
+      "cohort": "spread",
+      "planned_offset_seconds": 3.284,
+      "actual_offset_seconds": 3.299,
+      "changed_draft": false,
+      "ack_ms": 107.063
+    },
+    {
+      "turn": 10,
+      "player_id": "fe2e78da-c0ed-49e1-976c-e3cc49818003",
+      "cohort": "spread",
+      "planned_offset_seconds": 3.827,
+      "actual_offset_seconds": 3.829,
+      "changed_draft": false,
+      "ack_ms": 114.992
+    },
+    {
+      "turn": 10,
+      "player_id": "26dea41e-5019-454c-b4d9-f384e8ff31a7",
+      "cohort": "spread",
+      "planned_offset_seconds": 4.509,
+      "actual_offset_seconds": 4.516,
+      "changed_draft": false,
+      "ack_ms": 114.453
+    },
+    {
+      "turn": 10,
+      "player_id": "3c0967af-e6a6-445e-8659-7533e59bb221",
+      "cohort": "spread",
+      "planned_offset_seconds": 5.53,
+      "actual_offset_seconds": 5.533,
+      "changed_draft": false,
+      "ack_ms": 117.816
+    },
+    {
+      "turn": 10,
+      "player_id": "c81f7fd3-1995-4659-bb9c-6be248082467",
+      "cohort": "spread",
+      "planned_offset_seconds": 6.567,
+      "actual_offset_seconds": 6.576,
+      "changed_draft": false,
+      "ack_ms": 117.043
+    },
+    {
+      "turn": 10,
+      "player_id": "e126904a-34ce-43ec-9063-1d73e6d573ef",
+      "cohort": "spread",
+      "planned_offset_seconds": 6.813,
+      "actual_offset_seconds": 6.824,
+      "changed_draft": false,
+      "ack_ms": 113.378
+    },
+    {
+      "turn": 11,
+      "player_id": "3c0967af-e6a6-445e-8659-7533e59bb221",
+      "cohort": "parent",
+      "planned_offset_seconds": 1.613,
+      "actual_offset_seconds": 1.624,
+      "changed_draft": false,
+      "ack_ms": 145.217
+    },
+    {
+      "turn": 11,
+      "player_id": "cf42cdd4-c303-4e3b-ac28-a27a4b77eef4",
+      "cohort": "spread",
+      "planned_offset_seconds": 1.259,
+      "actual_offset_seconds": 1.264,
+      "changed_draft": false,
+      "ack_ms": 115.678
+    },
+    {
+      "turn": 11,
+      "player_id": "86e2bfcb-9799-461e-be2f-6ef201e011ea",
+      "cohort": "spread",
+      "planned_offset_seconds": 3.173,
+      "actual_offset_seconds": 3.186,
+      "changed_draft": false,
+      "ack_ms": 111.599
+    },
+    {
+      "turn": 11,
+      "player_id": "520f855b-2ba8-4269-a9c5-30b2777b399e",
+      "cohort": "spread",
+      "planned_offset_seconds": 3.666,
+      "actual_offset_seconds": 3.669,
+      "changed_draft": false,
+      "ack_ms": 114.589
+    },
+    {
+      "turn": 11,
+      "player_id": "0df52a4e-1a35-4b64-b064-a3fc7f5fec84",
+      "cohort": "spread",
+      "planned_offset_seconds": 4.169,
+      "actual_offset_seconds": 4.183,
+      "changed_draft": false,
+      "ack_ms": 119.309
+    },
+    {
+      "turn": 11,
+      "player_id": "26dea41e-5019-454c-b4d9-f384e8ff31a7",
+      "cohort": "spread",
+      "planned_offset_seconds": 4.595,
+      "actual_offset_seconds": 4.604,
+      "changed_draft": false,
+      "ack_ms": 122.219
+    },
+    {
+      "turn": 11,
+      "player_id": "a69496eb-df87-4bf8-9386-8828c2ad1613",
+      "cohort": "spread",
+      "planned_offset_seconds": 4.921,
+      "actual_offset_seconds": 4.934,
+      "changed_draft": false,
+      "ack_ms": 135.877
+    },
+    {
+      "turn": 11,
+      "player_id": "e126904a-34ce-43ec-9063-1d73e6d573ef",
+      "cohort": "spread",
+      "planned_offset_seconds": 6.367,
+      "actual_offset_seconds": 6.382,
+      "changed_draft": false,
+      "ack_ms": 119.656
+    },
+    {
+      "turn": 11,
+      "player_id": "fe2e78da-c0ed-49e1-976c-e3cc49818003",
+      "cohort": "spread",
+      "planned_offset_seconds": 6.474,
+      "actual_offset_seconds": 6.478,
+      "changed_draft": false,
+      "ack_ms": 147.72
+    },
+    {
+      "turn": 11,
+      "player_id": "55b648e2-d446-4732-952b-406c74b46628",
+      "cohort": "spread",
+      "planned_offset_seconds": 6.616,
+      "actual_offset_seconds": 6.617,
+      "changed_draft": false,
+      "ack_ms": 117.925
+    },
+    {
+      "turn": 11,
+      "player_id": "3b4c2479-1dcd-42d2-bb55-54b8402cfca7",
+      "cohort": "spread",
+      "planned_offset_seconds": 6.839,
+      "actual_offset_seconds": 6.853,
+      "changed_draft": false,
+      "ack_ms": 144.338
+    },
+    {
+      "turn": 11,
+      "player_id": "c81f7fd3-1995-4659-bb9c-6be248082467",
+      "cohort": "spread",
+      "planned_offset_seconds": 7.464,
+      "actual_offset_seconds": 7.478,
+      "changed_draft": false,
+      "ack_ms": 118.708
+    },
+    {
+      "turn": 12,
+      "player_id": "c81f7fd3-1995-4659-bb9c-6be248082467",
+      "cohort": "parent",
+      "planned_offset_seconds": 1.242,
+      "actual_offset_seconds": 1.256,
+      "changed_draft": false,
+      "ack_ms": 120.265
+    },
+    {
+      "turn": 12,
+      "player_id": "3b4c2479-1dcd-42d2-bb55-54b8402cfca7",
+      "cohort": "spread",
+      "planned_offset_seconds": 1.982,
+      "actual_offset_seconds": 1.988,
+      "changed_draft": false,
+      "ack_ms": 137.781
+    },
+    {
+      "turn": 12,
+      "player_id": "fe2e78da-c0ed-49e1-976c-e3cc49818003",
+      "cohort": "spread",
+      "planned_offset_seconds": 2.408,
+      "actual_offset_seconds": 2.421,
+      "changed_draft": false,
+      "ack_ms": 126.599
+    },
+    {
+      "turn": 12,
+      "player_id": "a69496eb-df87-4bf8-9386-8828c2ad1613",
+      "cohort": "spread",
+      "planned_offset_seconds": 3.377,
+      "actual_offset_seconds": 3.383,
+      "changed_draft": false,
+      "ack_ms": 142.668
+    },
+    {
+      "turn": 12,
+      "player_id": "86e2bfcb-9799-461e-be2f-6ef201e011ea",
+      "cohort": "spread",
+      "planned_offset_seconds": 4.114,
+      "actual_offset_seconds": 4.116,
+      "changed_draft": false,
+      "ack_ms": 130.025
+    },
+    {
+      "turn": 12,
+      "player_id": "520f855b-2ba8-4269-a9c5-30b2777b399e",
+      "cohort": "spread",
+      "planned_offset_seconds": 4.176,
+      "actual_offset_seconds": 4.179,
+      "changed_draft": false,
+      "ack_ms": 183.617
+    },
+    {
+      "turn": 12,
+      "player_id": "26dea41e-5019-454c-b4d9-f384e8ff31a7",
+      "cohort": "spread",
+      "planned_offset_seconds": 4.417,
+      "actual_offset_seconds": 4.427,
+      "changed_draft": false,
+      "ack_ms": 117.058
+    },
+    {
+      "turn": 12,
+      "player_id": "cf42cdd4-c303-4e3b-ac28-a27a4b77eef4",
+      "cohort": "spread",
+      "planned_offset_seconds": 4.624,
+      "actual_offset_seconds": 4.629,
+      "changed_draft": false,
+      "ack_ms": 103.025
+    },
+    {
+      "turn": 12,
+      "player_id": "e126904a-34ce-43ec-9063-1d73e6d573ef",
+      "cohort": "spread",
+      "planned_offset_seconds": 5.017,
+      "actual_offset_seconds": 5.02,
+      "changed_draft": false,
+      "ack_ms": 137.432
+    },
+    {
+      "turn": 12,
+      "player_id": "3c0967af-e6a6-445e-8659-7533e59bb221",
+      "cohort": "spread",
+      "planned_offset_seconds": 5.187,
+      "actual_offset_seconds": 5.191,
+      "changed_draft": false,
+      "ack_ms": 124.617
+    },
+    {
+      "turn": 12,
+      "player_id": "0df52a4e-1a35-4b64-b064-a3fc7f5fec84",
+      "cohort": "spread",
+      "planned_offset_seconds": 6.972,
+      "actual_offset_seconds": 6.983,
+      "changed_draft": false,
+      "ack_ms": 145.36
+    },
+    {
+      "turn": 12,
+      "player_id": "55b648e2-d446-4732-952b-406c74b46628",
+      "cohort": "spread",
+      "planned_offset_seconds": 7.507,
+      "actual_offset_seconds": 7.515,
+      "changed_draft": false,
+      "ack_ms": 119.634
+    }
+  ],
+  "metrics": {
+    "answer_ack": {
+      "count": 144,
+      "p50_ms": 113.79,
+      "p95_ms": 182.37,
+      "p99_ms": 301.71,
+      "max_ms": 324.29
+    },
+    "phase_arrival_spread": {
+      "count": 100,
+      "p50_ms": 2.46,
+      "p95_ms": 19.13,
+      "p99_ms": 1184.1,
+      "max_ms": 1596.89
+    },
+    "reconnect": {
+      "count": 0,
+      "p50_ms": null,
+      "p95_ms": null,
+      "p99_ms": null,
+      "max_ms": null
+    },
+    "burst_send_span": {
+      "count": 0,
+      "p50_ms": null,
+      "p95_ms": null,
+      "p99_ms": null,
+      "max_ms": null
+    }
+  },
+  "gates": {
+    "ack_p95": true,
+    "ack_p99": true,
+    "spread_p95": true,
+    "reconnect": true,
+    "schedule_lag_under_100ms": true
+  },
+  "errors": [],
+  "planned_close_warnings": [],
+  "last_states": {
+    "0df52a4e-1a35-4b64-b064-a3fc7f5fec84": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "cf42cdd4-c303-4e3b-ac28-a27a4b77eef4": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "a69496eb-df87-4bf8-9386-8828c2ad1613": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "e126904a-34ce-43ec-9063-1d73e6d573ef": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "86e2bfcb-9799-461e-be2f-6ef201e011ea": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "55b648e2-d446-4732-952b-406c74b46628": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "26dea41e-5019-454c-b4d9-f384e8ff31a7": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "3b4c2479-1dcd-42d2-bb55-54b8402cfca7": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "fe2e78da-c0ed-49e1-976c-e3cc49818003": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "c81f7fd3-1995-4659-bb9c-6be248082467": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "520f855b-2ba8-4269-a9c5-30b2777b399e": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "3c0967af-e6a6-445e-8659-7533e59bb221": {
+      "status": "FINISHED",
+      "turn": 12
+    }
+  }
+}

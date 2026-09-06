@@ -1,0 +1,171 @@
+{
+  "room": "5FYV",
+  "revision": "majority-git-00018-r4q",
+  "trace_count": 276,
+  "unique_traces": 276,
+  "log_limit_reached": false,
+  "non_ok": 0,
+  "conflict_retries": 0,
+  "groups": {
+    "answer": {
+      "room_lock_wait_ms": {
+        "count": 144,
+        "p50": 438.242,
+        "p95": 1022.146,
+        "p99": 1152.986,
+        "max": 1196.644
+      },
+      "room_lock_hold_ms": {
+        "count": 144,
+        "p50": 99.34,
+        "p95": 124.16,
+        "p99": 131.027,
+        "max": 197.601
+      },
+      "persistence_ms": {
+        "count": 144,
+        "p50": 93.401,
+        "p95": 118.977,
+        "p99": 124.092,
+        "max": 190.522
+      },
+      "mutation_ms": {
+        "count": 144,
+        "p50": 544.701,
+        "p95": 1137.524,
+        "p99": 1276.594,
+        "max": 1296.71
+      },
+      "ack_send_ms": {
+        "count": 144,
+        "p50": 0.193,
+        "p95": 0.301,
+        "p99": 0.473,
+        "max": 1.121
+      },
+      "broadcast_ms": {
+        "count": 144,
+        "p50": 6.125,
+        "p95": 15.797,
+        "p99": 19.347,
+        "max": 26.336
+      },
+      "total_ms": {
+        "count": 144,
+        "p50": 552.676,
+        "p95": 1139.136,
+        "p99": 1278.418,
+        "max": 1297.992
+      }
+    },
+    "select_answer": {
+      "room_lock_wait_ms": {
+        "count": 132,
+        "p50": 500.225,
+        "p95": 1044.669,
+        "p99": 1180.005,
+        "max": 1199.901
+      },
+      "room_lock_hold_ms": {
+        "count": 132,
+        "p50": 103.213,
+        "p95": 129.666,
+        "p99": 135.069,
+        "max": 165.682
+      },
+      "persistence_ms": {
+        "count": 132,
+        "p50": 96.014,
+        "p95": 117.188,
+        "p99": 127.729,
+        "max": 158.587
+      },
+      "mutation_ms": {
+        "count": 132,
+        "p50": 591.35,
+        "p95": 1179.902,
+        "p99": 1303.864,
+        "max": 1334.346
+      },
+      "ack_send_ms": {
+        "count": 0
+      },
+      "broadcast_ms": {
+        "count": 132,
+        "p50": 6.475,
+        "p95": 19.142,
+        "p99": 29.153,
+        "max": 29.87
+      },
+      "total_ms": {
+        "count": 132,
+        "p50": 599.474,
+        "p95": 1206.148,
+        "p99": 1305.316,
+        "max": 1336.258
+      }
+    }
+  },
+  "slowest_answers": [
+    {
+      "ack_send_count": 1,
+      "ack_send_ms": 0.188,
+      "broadcast_count": 1,
+      "broadcast_ms": 1.054,
+      "event": "room_command_timing",
+      "mutation_count": 1,
+      "mutation_ms": 1296.71,
+      "operation": "answer",
+      "outcome": "ok",
+      "persistence_count": 1,
+      "persistence_ms": 91.529,
+      "room_id": "5FYV",
+      "room_lock_hold_count": 1,
+      "room_lock_hold_ms": 99.897,
+      "room_lock_wait_count": 1,
+      "room_lock_wait_ms": 1196.644,
+      "total_ms": 1297.992,
+      "trace_id": "a35d56a763a843d09d4bd0e336158c87"
+    },
+    {
+      "ack_send_count": 1,
+      "ack_send_ms": 0.266,
+      "broadcast_count": 1,
+      "broadcast_ms": 1.501,
+      "event": "room_command_timing",
+      "mutation_count": 1,
+      "mutation_ms": 1276.594,
+      "operation": "answer",
+      "outcome": "ok",
+      "persistence_count": 1,
+      "persistence_ms": 113.915,
+      "room_id": "5FYV",
+      "room_lock_hold_count": 1,
+      "room_lock_hold_ms": 123.319,
+      "room_lock_wait_count": 1,
+      "room_lock_wait_ms": 1152.986,
+      "total_ms": 1278.418,
+      "trace_id": "2061f9b1c20e43839ae175b5e5af4326"
+    },
+    {
+      "ack_send_count": 1,
+      "ack_send_ms": 0.184,
+      "broadcast_count": 1,
+      "broadcast_ms": 2.866,
+      "event": "room_command_timing",
+      "mutation_count": 1,
+      "mutation_ms": 1224.503,
+      "operation": "answer",
+      "outcome": "ok",
+      "persistence_count": 1,
+      "persistence_ms": 107.943,
+      "room_id": "5FYV",
+      "room_lock_hold_count": 1,
+      "room_lock_hold_ms": 116.229,
+      "room_lock_wait_count": 1,
+      "room_lock_wait_ms": 1108.105,
+      "total_ms": 1227.609,
+      "trace_id": "d03ca90b1ac34f7c8206723a94cc8f76"
+    }
+  ]
+}
