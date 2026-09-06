@@ -1,0 +1,102 @@
+{
+  "passed": false,
+  "failure": null,
+  "url": "https://majority-git-cq56sbdefq-an.a.run.app",
+  "players": 12,
+  "games_completed": 1,
+  "elapsed_seconds": 291.07,
+  "last_room": "DTRF",
+  "started_at": "2026-09-06T05:22:38.094201+00:00",
+  "server_logs": {
+    "checked": false
+  },
+  "metrics": {
+    "answer_ack": {
+      "count": 144,
+      "p50_ms": 451.41,
+      "p95_ms": 995.08,
+      "p99_ms": 1155.71,
+      "max_ms": 1162.64
+    },
+    "phase_arrival_spread": {
+      "count": 101,
+      "p50_ms": 2.61,
+      "p95_ms": 13.79,
+      "p99_ms": 74.94,
+      "max_ms": 733.66
+    },
+    "reconnect": {
+      "count": 6,
+      "p50_ms": 339.77,
+      "p95_ms": 620.29,
+      "p99_ms": 620.29,
+      "max_ms": 620.29
+    },
+    "burst_send_span": {
+      "count": 12,
+      "p50_ms": 0.84,
+      "p95_ms": 3.28,
+      "p99_ms": 3.28,
+      "max_ms": 3.28
+    }
+  },
+  "gates": {
+    "ack_p95": false,
+    "ack_p99": false,
+    "spread_p95": true,
+    "burst_within_100ms": true,
+    "reconnect": true
+  },
+  "errors": [],
+  "planned_close_warnings": [],
+  "last_states": {
+    "3df7a43c-571b-4252-bd6a-4e76f5313b69": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "834052ea-4431-4747-9a70-fc5596ee1456": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "11a8e654-f22a-4b21-814a-5dde4e08527a": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "b303826a-5657-45ec-ac8f-cf982234a60e": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "0fcc2233-b12d-4b81-bcd3-97d7136cb016": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "c5b8530e-c983-4527-abc0-f63b3f136bbe": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "c89bda57-adfd-4528-b8c3-c4399b479f7b": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "5a6a164e-6467-4e9d-9253-53e18f5b544e": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "6436cbb8-5498-4782-92b1-b9f9e090ccba": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "e748efe2-0f00-40a9-9c32-8c73ba773be0": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "a30a2d52-bbb3-43b7-8e19-de621ccf5461": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "b9ed372f-a660-4931-be1e-dd4e9f30e267": {
+      "status": "FINISHED",
+      "turn": 12
+    }
+  }
+}

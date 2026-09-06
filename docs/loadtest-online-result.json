@@ -1,0 +1,114 @@
+{
+  "passed": false,
+  "failure": "AssertionError: initial snapshot: {'player': 'befea7b8-fe05-4ff6-a2c0-7b733ccbcedd', 'connection': 'sent 1000 (OK); no close frame received'}",
+  "url": "https://majority-git-cq56sbdefq-an.a.run.app",
+  "players": 12,
+  "games_completed": 0,
+  "elapsed_seconds": 15.91,
+  "last_room": "W9LH",
+  "started_at": "2026-09-06T05:16:51.643677+00:00",
+  "server_logs": {
+    "checked": false
+  },
+  "metrics": {
+    "answer_ack": {
+      "count": 0,
+      "p50_ms": null,
+      "p95_ms": null,
+      "p99_ms": null,
+      "max_ms": null
+    },
+    "phase_arrival_spread": {
+      "count": 0,
+      "p50_ms": null,
+      "p95_ms": null,
+      "p99_ms": null,
+      "max_ms": null
+    },
+    "reconnect": {
+      "count": 0,
+      "p50_ms": null,
+      "p95_ms": null,
+      "p99_ms": null,
+      "max_ms": null
+    },
+    "burst_send_span": {
+      "count": 0,
+      "p50_ms": null,
+      "p95_ms": null,
+      "p99_ms": null,
+      "max_ms": null
+    }
+  },
+  "gates": {
+    "ack_p95": false,
+    "ack_p99": false,
+    "spread_p95": false,
+    "burst_within_100ms": false,
+    "reconnect": false
+  },
+  "errors": [
+    {
+      "player": "db141cda-e998-4849-a909-ba1e155e1cd4",
+      "connection": "sent 1000 (OK); no close frame received"
+    },
+    {
+      "player": "befea7b8-fe05-4ff6-a2c0-7b733ccbcedd",
+      "connection": "sent 1000 (OK); no close frame received"
+    },
+    {
+      "player": "964a1247-28de-43c7-93ee-b8ebec801e39",
+      "connection": "sent 1000 (OK); no close frame received"
+    }
+  ],
+  "last_states": {
+    "3b0c629d-07cb-4a00-8edf-fba74b10e94b": {
+      "status": null,
+      "turn": null
+    },
+    "befea7b8-fe05-4ff6-a2c0-7b733ccbcedd": {
+      "status": null,
+      "turn": null
+    },
+    "db141cda-e998-4849-a909-ba1e155e1cd4": {
+      "status": null,
+      "turn": null
+    },
+    "b813faf5-156e-467d-8f01-62dc2a78aa74": {
+      "status": "SELECTING",
+      "turn": 0
+    },
+    "d9f2f7cc-12e7-442e-909c-a5ff25b0b4f8": {
+      "status": "SELECTING",
+      "turn": 0
+    },
+    "82da5fc6-bd40-4761-b220-322ec15224df": {
+      "status": "SELECTING",
+      "turn": 0
+    },
+    "d7f08af1-678a-4289-bbe9-ec34105141e5": {
+      "status": "SELECTING",
+      "turn": 0
+    },
+    "d31e2e03-9c8a-4e20-9abb-c28eeac4aa04": {
+      "status": "SELECTING",
+      "turn": 0
+    },
+    "309e69e1-345b-4b4c-a818-e9a7640f1e3b": {
+      "status": "SELECTING",
+      "turn": 0
+    },
+    "c2418e69-7bac-4995-8d8e-0d57904a73b9": {
+      "status": "SELECTING",
+      "turn": 0
+    },
+    "06c6781a-d9f2-4e63-a68d-5aaf09e9325e": {
+      "status": "SELECTING",
+      "turn": 0
+    },
+    "964a1247-28de-43c7-93ee-b8ebec801e39": {
+      "status": "SELECTING",
+      "turn": 0
+    }
+  }
+}

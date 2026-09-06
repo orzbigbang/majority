@@ -14,6 +14,7 @@ from .models import Answer, GameSettings, GameStatus, IntroKind, Player, Questio
 from .question_bank import default_questions
 from .repository.base import GameRepository, RoomConflictError
 from .rules import MAJORITY_PARTY_RULES, MajorityPartyRules, RoundInput
+from .timing import count, measured_room_lock, span
 
 COUNTDOWN_START_CUE_DURATION = 1
 QUESTION_OPTION_COUNT = 3
@@ -53,6 +54,7 @@ def retry_room_conflicts(operation):
             try:
                 return await operation(self, room_or_id, *args, **kwargs)
             except RoomConflictError:
+                count("conflict_retries")
                 self.rooms.pop(normalized_id, None)
                 if self.repository:
                     state = await asyncio.to_thread(self.repository.get_room, room_id)
@@ -344,7 +346,7 @@ class GameManager:
 
     @asynccontextmanager
     async def _room_command(self, room: Room, expected_clock: tuple | None = None):
-        async with room.lock:
+        async with measured_room_lock(room.lock):
             if expected_clock is not None:
                 deadline = room.clock_deadline()
                 if room.timer_token() != expected_clock or deadline is None or deadline > now():
@@ -491,7 +493,8 @@ class GameManager:
         if not self.repository:
             return room
         state = room.to_state()
-        saved = await asyncio.to_thread(self.repository.save_room, state, room.version)
+        with span("persistence"):
+            saved = await asyncio.to_thread(self.repository.save_room, state, room.version)
         # A watch callback can apply a newer version while this write is in flight.
         if room.version <= saved.version:
             room.apply_state(saved)
@@ -781,8 +784,8 @@ class GameManager:
                 room.last_result["leaderboard"] = self.leaderboard(room)
             if not room.players:
                 room.owner_id = None
-                self.rooms.pop(room.id, None)
                 await self._delete_room_async(room)
+                self.rooms.pop(room.id, None)
             elif player_id == room.owner_id:
                 room.owner_id = next(iter(room.players))
                 room.players[room.owner_id].ready = False

@@ -1,0 +1,132 @@
+{
+  "timeSeries": [
+    {
+      "metric": {
+        "type": "run.googleapis.com/container/cpu/utilizations"
+      },
+      "resource": {
+        "type": "cloud_run_revision",
+        "labels": {
+          "service_name": "majority-git",
+          "revision_name": "majority-git-00015-6df",
+          "configuration_name": "majority-git",
+          "project_id": "majority-504900",
+          "location": "asia-northeast1"
+        }
+      },
+      "metricKind": "GAUGE",
+      "valueType": "DOUBLE",
+      "points": [
+        {
+          "interval": {
+            "startTime": "2026-09-06T05:28:12Z",
+            "endTime": "2026-09-06T05:28:12Z"
+          },
+          "value": {
+            "doubleValue": 0.0799
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-09-06T05:27:12Z",
+            "endTime": "2026-09-06T05:27:12Z"
+          },
+          "value": {
+            "doubleValue": 0.0999
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-09-06T05:26:12Z",
+            "endTime": "2026-09-06T05:26:12Z"
+          },
+          "value": {
+            "doubleValue": 0.0799
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-09-06T05:25:12Z",
+            "endTime": "2026-09-06T05:25:12Z"
+          },
+          "value": {
+            "doubleValue": 0.059899999999999995
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-09-06T05:24:12Z",
+            "endTime": "2026-09-06T05:24:12Z"
+          },
+          "value": {
+            "doubleValue": 0.1099
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-09-06T05:23:12Z",
+            "endTime": "2026-09-06T05:23:12Z"
+          },
+          "value": {
+            "doubleValue": 0.0999
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-09-06T05:22:12Z",
+            "endTime": "2026-09-06T05:22:12Z"
+          },
+          "value": {
+            "doubleValue": 0.0799
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-09-06T05:21:12Z",
+            "endTime": "2026-09-06T05:21:12Z"
+          },
+          "value": {
+            "doubleValue": 0.0799
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-09-06T05:20:12Z",
+            "endTime": "2026-09-06T05:20:12Z"
+          },
+          "value": {
+            "doubleValue": 0.059899999999999995
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-09-06T05:19:12Z",
+            "endTime": "2026-09-06T05:19:12Z"
+          },
+          "value": {
+            "doubleValue": 0.059899999999999995
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-09-06T05:18:12Z",
+            "endTime": "2026-09-06T05:18:12Z"
+          },
+          "value": {
+            "doubleValue": 0.039900000000000005
+          }
+        },
+        {
+          "interval": {
+            "startTime": "2026-09-06T05:17:12Z",
+            "endTime": "2026-09-06T05:17:12Z"
+          },
+          "value": {
+            "doubleValue": 0.0299
+          }
+        }
+      ]
+    }
+  ],
+  "unit": "10^2.%"
+}

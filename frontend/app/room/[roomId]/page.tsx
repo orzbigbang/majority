@@ -348,6 +348,7 @@ export default function RoomPage({ params }: { params: Promise<{ roomId: string 
       };
       socket.onmessage = event => {
         const item = JSON.parse(event.data);
+        if (item.type === "room_left") { active = false; router.replace("/"); return; }
         if (item.type === "game_state") {
           useSnapshotClock(item.payload.clock?.server_time);
           const incomingRevision = Number(item.payload.clock?.revision ?? -1);
@@ -412,18 +413,31 @@ export default function RoomPage({ params }: { params: Promise<{ roomId: string 
     function syncWhenVisible() {
       if (document.visibilityState === "visible" && socket?.readyState === WebSocket.OPEN) syncClock(socket);
     }
+    function closeForNavigation() {
+      active = false;
+      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
+      if (clockSyncTimer !== null) window.clearInterval(clockSyncTimer);
+      socket?.close();
+    }
+    function restoreCachedPage(event: PageTransitionEvent) {
+      if (event.persisted) window.location.reload();
+    }
+    window.addEventListener("pagehide", closeForNavigation);
+    window.addEventListener("pageshow", restoreCachedPage);
     window.addEventListener("online", reconnectWhenOnline);
     document.addEventListener("visibilitychange", syncWhenVisible);
     void connect();
     return () => {
       active = false;
+      window.removeEventListener("pagehide", closeForNavigation);
+      window.removeEventListener("pageshow", restoreCachedPage);
       window.removeEventListener("online", reconnectWhenOnline);
       document.removeEventListener("visibilitychange", syncWhenVisible);
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
       if (clockSyncTimer !== null) window.clearInterval(clockSyncTimer);
       socket?.close();
     };
-  }, [roomId, identity, exitForJoinError, exitRoom, reactions.receive]);
+  }, [roomId, identity, exitForJoinError, exitRoom, reactions.receive, router]);
 
   function confirmAnswer() {
     if (!state?.question || !ws || ws.readyState !== WebSocket.OPEN || !identity || !selectedChoice || selectedChoice === confirmedChoice) {
@@ -593,7 +607,7 @@ export default function RoomPage({ params }: { params: Promise<{ roomId: string 
     <header className="game-header"><div className="room-header-copy"><span className="eyebrow">ルーム {roomId}</span><h1>{state.title || state.settings.game_name}</h1></div><div className="game-header-actions"><button type="button" className="secondary room-header-button room-rules-button" onClick={() => setRulesOpen(true)} aria-haspopup="dialog"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4.5h10a3 3 0 0 1 3 3V20H8a3 3 0 0 1-3-3V4.5Z" /><path d="M8 4.5V17a3 3 0 0 0 3 3M11 9h4M11 13h4" /></svg><span>ルール</span></button>{state.status === "WAITING" && !viewingResults && <button type="button" className="secondary room-header-button room-share-button" onClick={() => { setShareMessage(""); setRoomShareOpen(true); }} aria-haspopup="dialog"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="m8.6 10.5 6.8-4M8.6 13.5l6.8 4" /></svg><span>共有</span></button>}{(state.status !== "WAITING" || viewingResults) && <div className="player-score"><small>{viewingResults ? "最終スコア" : "現在のスコア"}</small><strong>{viewingResults ? (identity ? displayedBoard.find(player => player.id === identity.player_id)?.score ?? 0 : 0) : currentOwnScore}</strong></div>}</div></header>
     <div className="visually-hidden" aria-live="polite" aria-atomic="true">ゲーム状況：{viewingResults ? "ゲーム結果を表示中" : state.status === "WAITING" ? "プレイヤーの準備待ち" : state.status === "COUNTDOWN" ? (remaining === 0 ? "スタート" : "まもなく開始") : state.status === "TURN_INTRO" ? "次のゲーム画面を案内中" : state.status === "SELECTING" ? `${currentParent?.username || "親"}が問題を選択中` : state.status === "PARENT_ANSWERING" ? `${currentParent?.username || "親"}が先に回答中` : state.status === "QUESTION" ? `第${state.current_question_index + 1}問` : state.status === "PAUSED" ? "一時停止中" : state.status === "SHOW_RESULT" ? (isLastQuestion ? "最終結果を計算中" : "この問題の結果を表示中") : "集計中"}</div>
 
-    {state.status === "WAITING" && !viewingResults && <section className="card waiting-card"><div className="section-heading"><div><span className="step-label">プレイヤー待機中</span><h2>みんなの準備を待っています</h2><p className="muted">参加者全員が準備できたら開始できます。ほかの人のアバターを押すと、リアクションを送れます。</p></div><div className="ready-meter" aria-label={`${participants.length}人中${readyCount}人が準備完了`}><strong>{readyCount}</strong><span>/ {participants.length}</span></div></div><div className="ready-list">{state.players.map(player => { const isCurrentPlayer = player.id === identity?.player_id; return <article key={player.id} className={`${player.id === state.owner_id ? "room-owner" : player.ready ? "ready" : "not-ready"}${isCurrentPlayer ? " is-you" : ""}`} aria-label={isCurrentPlayer ? `${player.username}、自分のプレイヤーカード` : undefined}><ReactionAvatarButton target={{ id: player.id, username: player.username }} surfaceId="waiting" disabled={isCurrentPlayer || !player.connected} onSelect={reactions.openPicker}><img width="38" height="38" src={avatarUrl(player.id)} alt="" /></ReactionAvatarButton><span>{player.id === state.owner_id ? "★ ルームオーナー" : player.ready ? "✓ 準備完了" : "○ 準備中"}</span><strong><PlayerName name={player.username} />{isCurrentPlayer && <i className="self-marker" aria-hidden="true" />}</strong>{isOwner && player.id !== state.owner_id && <button type="button" className="secondary transfer-owner" onClick={() => setPendingOwnerId(player.id)}>オーナーにする</button>}</article>; })}</div><div className="waiting-actions">{isOwner ? <button type="button" className="waiting-primary-action" onClick={startGame} disabled={!everyoneReady}>{participants.length === 0 ? "参加者を待っています" : everyoneReady ? "ゲームを開始！" : `準備待ち（${readyCount}/${participants.length}）`}</button> : <button type="button" className="ready-toggle waiting-primary-action" aria-pressed={isReady} onClick={markReady}>{isReady ? "✓ 準備完了" : "準備"}</button>}<div className="waiting-secondary-actions">{isOwner && <button type="button" className="secondary" onClick={() => void openRoomSettings()}>ルーム設定</button>}<a className="secondary admin-button" href="/">ロビーに戻る</a></div></div>{state.previous_game && <button type="button" className="secondary previous-game-button" onClick={() => setShowPreviousGame(true)}>前回のゲーム結果を見る</button>}</section>}
+    {state.status === "WAITING" && !viewingResults && <section className="card waiting-card"><div className="section-heading"><div><span className="step-label">プレイヤー待機中</span><h2>みんなの準備を待っています</h2><p className="muted">参加者全員が準備できたら開始できます。ほかの人のアバターを押すと、リアクションを送れます。</p></div><div className="ready-meter" aria-label={`${participants.length}人中${readyCount}人が準備完了`}><strong>{readyCount}</strong><span>/ {participants.length}</span></div></div><div className="ready-list">{state.players.map(player => { const isCurrentPlayer = player.id === identity?.player_id; return <article key={player.id} className={`${player.id === state.owner_id ? "room-owner" : player.ready ? "ready" : "not-ready"}${isCurrentPlayer ? " is-you" : ""}`} aria-label={isCurrentPlayer ? `${player.username}、自分のプレイヤーカード` : undefined}><ReactionAvatarButton target={{ id: player.id, username: player.username }} surfaceId="waiting" disabled={isCurrentPlayer || !player.connected} onSelect={reactions.openPicker}><img width="38" height="38" src={avatarUrl(player.id)} alt="" /></ReactionAvatarButton><span>{player.id === state.owner_id ? "★ ルームオーナー" : player.ready ? "✓ 準備完了" : "○ 準備中"}</span><strong><PlayerName name={player.username} />{isCurrentPlayer && <i className="self-marker" aria-hidden="true" />}</strong>{isOwner && player.id !== state.owner_id && <button type="button" className="secondary transfer-owner" onClick={() => setPendingOwnerId(player.id)}>オーナーにする</button>}</article>; })}</div><div className="waiting-actions">{isOwner ? <button type="button" className="waiting-primary-action" onClick={startGame} disabled={!everyoneReady}>{participants.length === 0 ? "参加者を待っています" : everyoneReady ? "ゲームを開始！" : `準備待ち（${readyCount}/${participants.length}）`}</button> : <button type="button" className="ready-toggle waiting-primary-action" aria-pressed={isReady} onClick={markReady}>{isReady ? "✓ 準備完了" : "準備"}</button>}<div className="waiting-secondary-actions">{isOwner && <button type="button" className="secondary" onClick={() => void openRoomSettings()}>ルーム設定</button>}<button type="button" className="secondary admin-button" disabled={!ws || ws.readyState !== WebSocket.OPEN} onClick={() => ws?.send(JSON.stringify({ type: "leave_room" }))}>ロビーに戻る</button></div></div>{state.previous_game && <button type="button" className="secondary previous-game-button" onClick={() => setShowPreviousGame(true)}>前回のゲーム結果を見る</button>}</section>}
 
     {state.status === "COUNTDOWN" && <section className="card phase-card countdown-card"><p className="eyebrow">最初の親まであと少し</p><strong className={`phase-number${remaining === 0 ? " phase-start" : ""}`} role="timer" aria-label={remaining === 0 ? "スタート" : `残り${remaining}秒`}>{remaining === 0 ? "スタート！" : remaining}</strong><p>親が問題と自分の回答を決めたら、みんなの回答が始まります。</p></section>}
 

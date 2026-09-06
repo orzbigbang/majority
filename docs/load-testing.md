@@ -68,3 +68,42 @@ Starlette 在发送时遇到关闭的底层连接，会将 `application_state` �
 相关测试 10 项通过。全量测试首次 57 通过、1 失败（`test_failed_save_preserves_a_newer_watch_state`）；该持久化测试单独复跑通过，全量复跑 58 项全部通过。该项曾失败的记录保留，尚未针对其偶发性另行排查。
 
 修复后使用最终版脚本完成同样的 12 人完整游戏：12 题、144 次确认、6 次连接恢复，耗时 282.73 秒。所有业务核对及性能门槛通过，自动检查服务端日志无异常。确认 P95 208.98ms、P99 231.30ms；状态到达差 P95 4.50ms；重连到快照最大 78.11ms；11 人集中提交的起始跨度最大 6.42ms。见 [修复后报告](loadtest-fixed-result.json)。这是本地单局复测，未进行线上或 10 局耐久验证。
+
+## 2026-09-06 线上测试
+
+目标为 `majority-git`，区域 `asia-northeast1`，修订 `majority-git-00015-6df`；1 vCPU / 512MiB，并发配置 80，请求超时 3600 秒。服务级 `maxScale=1`，修订级上限 20；服务级限制仍将服务限制为单实例。由本机作为单个压测节点发起，使用真实 HTTP、WebSocket 和线上持久化；没有修改部署配置。
+
+首次重连尝试在脚本主动关闭连接后遇到 `sent 1000 (OK); no close frame received`，旧脚本将其计为意外连接错误而停止，见 [首次尝试](loadtest-online-result.json)。现将主动关闭期间的 ConnectionClosed 单独记为 `planned_close_warnings`，意外断线和其他异常仍失败。缺失关闭握手的原因尚未确定，不能据此认定后端崩溃；警告不会从报告中删除。分类行为通过 `backend/test_loadtest_client.py` 的 3 个案例验证。
+
+正常基准局（房间 `2VMD`）完成 12 题、144 次确认，耗时 290.01 秒，答案、计分和各客户端复盘一致；确认 P95 1038.69ms、P99 4620.50ms、最大 4623.62ms，未达到 500ms / 1000ms 的目标。状态到达差 P95 7.67ms；11 人提交起始跨度最大 5.57ms。见 [基准报告](loadtest-online-baseline-result.json)。该局运行的是调整前脚本，收尾主动关闭的一条握手警告仍在 errors 中；即使排除它，延迟门槛仍未通过。
+
+云端日志另行审计，见 [Cloud Run 日志摘要](loadtest-online-cloud-audit.json)；协议报告的 `server_logs.checked=false` 仅表示没有运行本地 Docker 日志检查。日志摘要保留查询时间范围、实例、修订及 HTTP 状态分布，避免保存含 session 查询参数的普通访问日志。409 满员拒绝是脚本有意触发的预期响应。
+
+调整后的重连场景（房间 `DTRF`）完成 12 题、144 次确认及 6 次连接恢复，耗时 291.07 秒。答案、计分、复盘一致，没有客户端错误或关闭握手警告。确认 P95 995.08ms、P99 1155.71ms、最大 1162.64ms；仍未达到延迟门槛。状态到达差 P95 13.79ms；重连到快照最大 620.29ms；11 人提交起始跨度最大 3.28ms。见 [重连报告](loadtest-online-reconnect-result.json)。
+
+结论：两局完整线上流程的业务一致性通过，重连恢复通过，确认延迟性能不通过。应先增加房间锁等待、Firestore 保存、确认发送的分段耗时记录，定位尾延迟后再优化；不应在缺少证据时直接扩容实例或放宽验收门槛。
+
+测试创建了 `W9LH`、`2VMD`、`DTRF` 三个房间及对应测试用户/历史；没有批量删除线上数据。此测试不覆盖分布式客户端、真实手机渲染或长期容量。确认延迟尚无服务端分段追踪，不能仅凭结果将原因归结为 Firestore 或 CPU。
+
+## 延迟诊断与可选计时
+
+已查询同一测试时间段的 Cloud Monitoring 容器 CPU / 内存利用率，按 60 秒窗口使用 ALIGN_PERCENTILE_99 对齐：CPU 样本约 2.99%～10.99%，内存约 24.99%～26.99%。见 [CPU 原始指标](loadtest-online-cpu.json)、[内存原始指标](loadtest-online-memory.json)。这不支持持续资源饱和的判断，但分钟级采样无法排除短暂尖峰或事件循环阻塞。Firestore `(default)` 与 Cloud Run 均位于 `asia-northeast1`。
+
+当前答题链路持有房间锁，等待 `save_room()` 的 Firestore 事务读取和提交完成，之后才发送 `answer_saved`。因此 11 人集中提交会串行等待多次持久化，这是尾延迟的候选原因，尚非线上分段计时确认的结论。尤其不能据此将基准局 4.62 秒的尖峰直接归因于 Firestore。
+
+新增 `app/timing.py`，默认关闭。部署包含该代码的版本后，设置环境变量 `ROOM_TIMING_ENABLED=true`，运行一局同样的测试，并搜索日志中的 `room_command_timing`。完成诊断后设回 `false` 即可停止记录。本次未部署或修改线上变量。
+
+每条 `answer` / `select_answer` 记录带独立 trace_id、room_id、operation、outcome，并包含以下耗时（毫秒）：
+
+- `room_lock_wait_ms`：等待房间锁，含重试的累计值。
+- `room_lock_hold_ms`：持锁时长，含持久化与失败回滚。
+- `persistence_ms`：等待线程池中的 repository.save_room 完成，包含线程池排队、事务读写及内部重试，并非纯网络耗时。
+- `mutation_ms`：游戏操作总耗时，包含锁等待、持久化及 CAS 重试。
+- `ack_send_ms`：确认发送耗时，包含该 WebSocket 的发送锁等待；发送失败另记 `ack_send_failures`。
+- `broadcast_ms`：随后向房间广播的总等待时长。
+- `conflict_retries`：应用层 RoomConflictError 重试次数，缺省代表 0。
+- `total_ms`：操作处理到广播结束的时间，包含确认之后的工作，不等于客户端确认 RTT，也不包含进入消息分支前的处理与网络传播。
+
+各字段存在包含关系，不应全部相加。日志不含玩家名、player_id、session_id、题目、答案或异常详情。事件循环内每个命令使用独立 ContextVar，取消、失败和并发操作均保留原有异常与锁释放行为。
+
+本地新增成功保存、失败回滚、并发隔离/取消、默认禁用等计时测试，全量结果 65 passed / 1 skipped（Docker 未运行，Firestore 模拟器集成测试跳过）。真实云端各段耗时仍需部署启用后采集。

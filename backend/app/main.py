@@ -23,6 +23,7 @@ from .avatar_storage import AvatarStorage
 from .models import AnswerPayload, EmojiReactionPayload, GameHistoryAnswer, GameHistoryRecord, GameSettings, GameStatus, IdentityRequest, IntroKind, JoinRequest, LoginRequest, PlayerProfileUpdate, Question, QuestionSelectionPayload, RoomCreateRequest, RoomSettingsUpdate, RoomUpdate, UserProfile, UserProfileUpdate, now
 from .repository import FirestoreGameRepository
 from .repository.base import GameRepository
+from .timing import command_timing, count, span
 
 manager = GameManager()
 repository: GameRepository | None = FirestoreGameRepository() if os.getenv("FIRESTORE_ENABLED", "false").lower() == "true" else None
@@ -661,6 +662,22 @@ async def websocket(ws: WebSocket, room_id: str) -> None:
             # WebSocket remains open. Always make authorization and phase
             # decisions against the latest accepted room state.
             room = await manager.ensure_room(room.id)
+            if message.get("type") == "leave_room":
+                if room.status != GameStatus.WAITING:
+                    await send_message(ws, "error", {"code": "GAME_ALREADY_STARTED", "message": "GAME_ALREADY_STARTED"})
+                    continue
+                try:
+                    changed = await manager.leave(room.id, connected_player_id)
+                except HTTPException as exc:
+                    await send_message(ws, "error", {"code": str(exc.detail), "message": str(exc.detail)})
+                    continue
+                websocket_players.pop(ws, None)
+                await send_message(ws, "room_left", {"room_id": room.id})
+                await broadcast(room.id, "game_state", changed.snapshot())
+                if room.id not in manager.rooms:
+                    clear_room_reactions(room.id)
+                await ws.close(code=1000)
+                break
             if message.get("type") == "time_sync":
                 client_sent_at = (message.get("payload") or {}).get("client_sent_at")
                 client_monotonic = (message.get("payload") or {}).get("client_monotonic")
@@ -668,15 +685,20 @@ async def websocket(ws: WebSocket, room_id: str) -> None:
                     await send_message(ws, "time_sync", {"client_sent_at": client_sent_at, "client_monotonic": client_monotonic, "server_time": now().isoformat()}, droppable=True)
             if message.get("type") in {"answer", "select_answer"}:
                 try:
-                    payload = AnswerPayload.model_validate(message.get("payload"))
-                    parent_was_answering = room.status == GameStatus.PARENT_ANSWERING
-                    changed = await (manager.answer(room.id, connected_player_id, payload.question_id, payload.choice) if message.get("type") == "answer" else manager.select_answer(room.id, connected_player_id, payload.question_id, payload.choice))
-                    if message.get("type") == "answer":
-                        await send_message(ws, "answer_saved", {"choice": payload.choice})
-                    if parent_was_answering and message.get("type") == "answer":
-                        await broadcast(room.id, "game_state", changed.snapshot())
-                    else:
-                        await broadcast(room.id, "answer_count", {"answered": len(changed.answers), "total": len(changed.players)})
+                    with command_timing(room.id, message["type"]):
+                        payload = AnswerPayload.model_validate(message.get("payload"))
+                        parent_was_answering = room.status == GameStatus.PARENT_ANSWERING
+                        with span("mutation"):
+                            changed = await (manager.answer(room.id, connected_player_id, payload.question_id, payload.choice) if message.get("type") == "answer" else manager.select_answer(room.id, connected_player_id, payload.question_id, payload.choice))
+                        if message.get("type") == "answer":
+                            with span("ack_send"):
+                                if not await send_message(ws, "answer_saved", {"choice": payload.choice}):
+                                    count("ack_send_failures")
+                        with span("broadcast"):
+                            if parent_was_answering and message.get("type") == "answer":
+                                await broadcast(room.id, "game_state", changed.snapshot())
+                            else:
+                                await broadcast(room.id, "answer_count", {"answered": len(changed.answers), "total": len(changed.players)})
                 except HTTPException as exc: await send_message(ws, "error", {"code": str(exc.detail), "message": str(exc.detail)})
                 except ValidationError: await send_message(ws, "error", {"code": "INVALID_ANSWER", "message": "INVALID_ANSWER"})
             if message.get("type") == "select_question":

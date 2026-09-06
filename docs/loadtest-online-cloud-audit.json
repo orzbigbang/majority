@@ -1,0 +1,28 @@
+{
+  "period_start": "2026-09-06T05:16:50Z",
+  "period_end": "2026-09-06T05:28:11.9526151Z",
+  "log_entries": 284,
+  "query_limit": 1000,
+  "limit_reached": false,
+  "instance_ids": [
+    "00a41e8c1d6d653889e0ea40577e6d60609311aaed9972d6b1382bdb739f0d038488c7d26b3433e9f4a63a4f2b26a89dc062665d3971c712fb5f983240ef67153350785ebb2820cdab91a7056dabfc179a"
+  ],
+  "revisions": [
+    "majority-git-00015-6df"
+  ],
+  "exceptions": [],
+  "http_status_counts": [
+    {
+      "Name": "101",
+      "Count": 45
+    },
+    {
+      "Name": "200",
+      "Count": 49
+    },
+    {
+      "Name": "409",
+      "Count": 3
+    }
+  ]
+}

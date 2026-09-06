@@ -16,6 +16,7 @@ from uuid import uuid4
 
 import httpx
 from websockets.asyncio.client import connect
+from websockets.exceptions import ConnectionClosed
 
 
 def stats(values):
@@ -62,7 +63,8 @@ class Player:
                 elif kind == "error":
                     self.run.errors.append({"player": self.id, "error": payload})
         except Exception as exc:
-            self.run.errors.append({"player": self.id, "connection": str(exc)})
+            destination = self.run.close_warnings if self.closing and isinstance(exc, ConnectionClosed) else self.run.errors
+            destination.append({"player": self.id, "connection": str(exc)})
         finally:
             if not self.closing:
                 self.run.errors.append({"player": self.id, "connection": "unexpected connection end"})
@@ -93,6 +95,7 @@ class Run:
         self.args = args
         self.ws_url = args.url.rstrip("/").replace("http://", "ws://").replace("https://", "wss://")
         self.players, self.errors, self.latencies, self.reconnect_ms = [], [], [], []
+        self.close_warnings = []
         self.arrivals, self.expected = {}, {}
         self.room = None
         self.completed = 0
@@ -243,6 +246,7 @@ class Run:
                   "elapsed_seconds": round(time.perf_counter() - started, 2), "last_room": self.room,
                   "started_at": started_at, "server_logs": server_check,
                   "metrics": metrics, "gates": gates, "errors": self.errors,
+                  "planned_close_warnings": self.close_warnings,
                   "last_states": {p.id: {"status": p.state.get("status"), "turn": p.state.get("current_question_index")} for p in self.players}}
         self.args.output.parent.mkdir(parents=True, exist_ok=True)
         self.args.output.write_text(json.dumps(report, indent=2), encoding="utf-8")
