@@ -1,0 +1,33 @@
+{
+  "start": "2026-09-06T08:36:54Z",
+  "end": "2026-09-06T08:43:00Z",
+  "count": 104,
+  "limit_reached": false,
+  "instances": [
+    "00a41e8c1d0c326353f49504ce64d5d618764ce85efaea788265aee5ad68c3946b83c0e483dc2efd1ef75975d922c8aa5c29030b5229212be1a0a9e3c5d8390462aa370e1055bbb6aeae6dd2cf6b450dd0c4"
+  ],
+  "revisions": [
+    "majority-git-00016-bsd"
+  ],
+  "events": [
+    {
+      "timestamp": "2026-09-06T08:36:55.967009Z",
+      "severity": "INFO",
+      "message": "Starting new instance. Reason: AUTOSCALING - Instance started due to configured scaling factors (e.g. CPU utilization, request throughput, etc.) or no existing capacity for current traffic."
+    }
+  ],
+  "http_status_counts": [
+    {
+      "Name": "101",
+      "Count": 18
+    },
+    {
+      "Name": "200",
+      "Count": 12
+    },
+    {
+      "Name": "409",
+      "Count": 1
+    }
+  ]
+}

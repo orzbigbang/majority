@@ -1,0 +1,144 @@
+{
+  "passed": false,
+  "failure": "AssertionError: {'player': '5ad5d20f-54d9-44f9-a38d-110afaf93696', 'connection': 'unexpected connection end'}",
+  "url": "https://majority-git-cq56sbdefq-an.a.run.app",
+  "players": 12,
+  "games_completed": 0,
+  "elapsed_seconds": 289.84,
+  "last_room": "K9A7",
+  "started_at": "2026-09-06T08:36:54.863670+00:00",
+  "server_logs": {
+    "checked": false
+  },
+  "metrics": {
+    "answer_ack": {
+      "count": 144,
+      "p50_ms": 510.0,
+      "p95_ms": 1001.22,
+      "p99_ms": 1086.72,
+      "max_ms": 1159.49
+    },
+    "phase_arrival_spread": {
+      "count": 0,
+      "p50_ms": null,
+      "p95_ms": null,
+      "p99_ms": null,
+      "max_ms": null
+    },
+    "reconnect": {
+      "count": 6,
+      "p50_ms": 373.28,
+      "p95_ms": 781.57,
+      "p99_ms": 781.57,
+      "max_ms": 781.57
+    },
+    "burst_send_span": {
+      "count": 12,
+      "p50_ms": 0.96,
+      "p95_ms": 3.95,
+      "p99_ms": 3.95,
+      "max_ms": 3.95
+    }
+  },
+  "gates": {
+    "ack_p95": false,
+    "ack_p99": false,
+    "spread_p95": false,
+    "burst_within_100ms": true,
+    "reconnect": true
+  },
+  "errors": [
+    {
+      "player": "5ad5d20f-54d9-44f9-a38d-110afaf93696",
+      "connection": "no close frame received or sent"
+    },
+    {
+      "player": "5ad5d20f-54d9-44f9-a38d-110afaf93696",
+      "connection": "unexpected connection end"
+    }
+  ],
+  "planned_close_warnings": [
+    {
+      "player": "58cd3996-de21-422f-8e2a-22c6f7a443a6",
+      "connection": "sent 1000 (OK); no close frame received"
+    },
+    {
+      "player": "892160de-dfc3-4131-931e-01b7137cd7e7",
+      "connection": "sent 1000 (OK); no close frame received"
+    },
+    {
+      "player": "f70fc51e-0c47-41b2-ac6b-6d02482a1d13",
+      "connection": "sent 1000 (OK); no close frame received"
+    },
+    {
+      "player": "c738a43c-76f3-46f6-9ded-1517ef3420b3",
+      "connection": "sent 1000 (OK); no close frame received"
+    },
+    {
+      "player": "36a4da62-ded5-4f87-9b60-b27708ac2f3c",
+      "connection": "sent 1000 (OK); no close frame received"
+    },
+    {
+      "player": "9e5638de-cba4-4bf0-836c-7125d1320cc0",
+      "connection": "sent 1000 (OK); no close frame received"
+    },
+    {
+      "player": "645984fe-d117-4d94-84ad-95a7657c2042",
+      "connection": "sent 1000 (OK); no close frame received"
+    },
+    {
+      "player": "c930c779-39ef-44b9-b287-476b9e42fdae",
+      "connection": "sent 1000 (OK); no close frame received"
+    }
+  ],
+  "last_states": {
+    "5ad5d20f-54d9-44f9-a38d-110afaf93696": {
+      "status": "QUESTION",
+      "turn": 11
+    },
+    "892160de-dfc3-4131-931e-01b7137cd7e7": {
+      "status": "QUESTION",
+      "turn": 11
+    },
+    "58cd3996-de21-422f-8e2a-22c6f7a443a6": {
+      "status": "QUESTION",
+      "turn": 11
+    },
+    "c930c779-39ef-44b9-b287-476b9e42fdae": {
+      "status": "QUESTION",
+      "turn": 11
+    },
+    "36a4da62-ded5-4f87-9b60-b27708ac2f3c": {
+      "status": "QUESTION",
+      "turn": 11
+    },
+    "645984fe-d117-4d94-84ad-95a7657c2042": {
+      "status": "QUESTION",
+      "turn": 11
+    },
+    "9e5638de-cba4-4bf0-836c-7125d1320cc0": {
+      "status": "QUESTION",
+      "turn": 11
+    },
+    "c738a43c-76f3-46f6-9ded-1517ef3420b3": {
+      "status": "QUESTION",
+      "turn": 11
+    },
+    "14680f07-89bc-48e1-9799-d4527177aac2": {
+      "status": "QUESTION",
+      "turn": 11
+    },
+    "f7140b36-9ce9-4813-a6f4-1758799fb9b1": {
+      "status": "QUESTION",
+      "turn": 11
+    },
+    "f0908ec3-a27d-4ad8-bd99-1456fa93c1eb": {
+      "status": "QUESTION",
+      "turn": 11
+    },
+    "f70fc51e-0c47-41b2-ac6b-6d02482a1d13": {
+      "status": "QUESTION",
+      "turn": 11
+    }
+  }
+}

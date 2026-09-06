@@ -1,0 +1,115 @@
+{
+  "passed": false,
+  "failure": null,
+  "url": "https://majority-git-cq56sbdefq-an.a.run.app",
+  "players": 12,
+  "games_completed": 1,
+  "elapsed_seconds": 301.87,
+  "last_room": "RAKZ",
+  "started_at": "2026-09-06T11:18:57.947795+00:00",
+  "server_logs": {
+    "checked": false
+  },
+  "metrics": {
+    "answer_ack": {
+      "count": 144,
+      "p50_ms": 561.9,
+      "p95_ms": 1184.28,
+      "p99_ms": 1273.02,
+      "max_ms": 1298.63
+    },
+    "phase_arrival_spread": {
+      "count": 101,
+      "p50_ms": 1.88,
+      "p95_ms": 6.02,
+      "p99_ms": 287.03,
+      "max_ms": 980.2
+    },
+    "reconnect": {
+      "count": 6,
+      "p50_ms": 437.19,
+      "p95_ms": 1004.92,
+      "p99_ms": 1004.92,
+      "max_ms": 1004.92
+    },
+    "burst_send_span": {
+      "count": 12,
+      "p50_ms": 0.5,
+      "p95_ms": 0.86,
+      "p99_ms": 0.86,
+      "max_ms": 0.86
+    }
+  },
+  "gates": {
+    "ack_p95": false,
+    "ack_p99": false,
+    "spread_p95": true,
+    "burst_within_100ms": true,
+    "reconnect": true
+  },
+  "errors": [],
+  "planned_close_warnings": [
+    {
+      "player": "4f4c5e31-8ecc-435d-8f5a-3816e08e60df",
+      "connection": "sent 1000 (OK); no close frame received"
+    },
+    {
+      "player": "fd1b732a-fbad-4d28-aece-87de9a724cfb",
+      "connection": "sent 1000 (OK); no close frame received"
+    },
+    {
+      "player": "4f4c5e31-8ecc-435d-8f5a-3816e08e60df",
+      "connection": "sent 1000 (OK); no close frame received"
+    }
+  ],
+  "last_states": {
+    "fd1b732a-fbad-4d28-aece-87de9a724cfb": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "4d3da77c-1fb4-48c9-a1ab-91b43e6811af": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "4f4c5e31-8ecc-435d-8f5a-3816e08e60df": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "300e1c6b-5057-45ec-a478-2c0e959ae4ee": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "a28787c3-2315-4f30-ad01-9c1053e2eef8": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "4b5178f7-2af9-4959-8fae-1f572df0a0f3": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "776222a2-5294-4a44-8ba5-b034833d2de0": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "3dc7a39d-7c64-454d-95c1-aa752b5758b8": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "51b5aef8-420d-407a-92db-c3dbf49aefc8": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "687141fc-f4ea-4ea4-bcb2-c5f11b3b3c7f": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "a3dce6b1-ba03-4b69-9c5f-0eb82b51d4c6": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "ab1e9ebe-1cd6-44e1-8af1-ce13cb166355": {
+      "status": "FINISHED",
+      "turn": 12
+    }
+  }
+}
