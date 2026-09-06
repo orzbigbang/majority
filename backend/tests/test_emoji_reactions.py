@@ -15,6 +15,7 @@ from app.main import (
     reaction_history,
     record_reaction,
     room_reaction_history,
+    send_to_player,
     websocket_players,
     websocket_priority_waiters,
     websocket_send_locks,
@@ -123,6 +124,35 @@ def test_broadcast_sends_to_connections_concurrently() -> None:
         asyncio.run(run())
     finally:
         connections.pop("FAST", None)
+        websocket_send_locks.clear()
+        websocket_priority_waiters.clear()
+
+
+def test_send_to_player_keeps_private_payload_from_other_players() -> None:
+    class RecordingSocket:
+        def __init__(self) -> None:
+            self.messages = []
+
+        async def send_json(self, message) -> None:
+            self.messages.append(message)
+
+    async def run() -> None:
+        parent_socket = RecordingSocket()
+        guest_socket = RecordingSocket()
+        connections["PRIVATE"] = {parent_socket, guest_socket}
+        websocket_players[parent_socket] = ("PRIVATE", "parent")
+        websocket_players[guest_socket] = ("PRIVATE", "guest")
+
+        await send_to_player("PRIVATE", "parent", "answer_saved", {"choice": "A", "automatic": True})
+
+        assert parent_socket.messages == [{"type": "answer_saved", "payload": {"choice": "A", "automatic": True}}]
+        assert guest_socket.messages == []
+
+    try:
+        asyncio.run(run())
+    finally:
+        connections.pop("PRIVATE", None)
+        websocket_players.clear()
         websocket_send_locks.clear()
         websocket_priority_waiters.clear()
 

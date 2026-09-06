@@ -27,14 +27,20 @@ def test_player_can_update_profile_and_review_finished_game() -> None:
             await manager.mark_ready(room.id, "bob")
             await manager.start(room.id, "alice")
             while room.status != "FINISHED":
+                await manager.advance_intro(room)
+                if room.status == "TURN_INTRO" and room.intro_kind == "PARENT_SELECT":
+                    await manager.advance_intro(room)
                 question_id = room.selection_question_ids[0]
                 parent_id = room.current_parent_id
                 await manager.choose_question(room.id, parent_id, question_id)
+                await manager.advance_intro(room)
                 parent_choice = "B" if parent_id == "alice" else "B"
                 await manager.answer(room.id, parent_id, question_id, parent_choice)
+                await manager.advance_intro(room)
                 other_id = "bob" if parent_id == "alice" else "alice"
                 other_choice = "A" if parent_id == "alice" else "B"
                 await manager.answer(room.id, other_id, question_id, other_choice)
+                await manager.begin_result_reveal(room)
                 await manager.lock_and_score(room)
                 await manager.next(room.id)
             save_finished_game(room)

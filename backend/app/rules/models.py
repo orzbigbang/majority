@@ -14,6 +14,7 @@ class RuleSpec:
     score_floor: int = 0
     tie_breaker: str = "parent_choice"
     parent_collects_from_minority: bool = True
+    parent_collects_only_when_majority: bool = True
     parent_collects_when_minority_has_zero: bool = True
     minority_parent_pays_to_table: bool = True
 

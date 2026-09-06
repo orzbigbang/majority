@@ -3,7 +3,7 @@ import asyncio
 from fastapi.testclient import TestClient
 
 from app.main import app, connections, manager, websocket_players
-from app.models import GameSettings
+from app.models import GameSettings, IntroKind
 
 
 def test_websocket_disconnect_during_game_preserves_player_for_reconnect() -> None:
@@ -18,7 +18,13 @@ def test_websocket_disconnect_during_game_preserves_player_for_reconnect() -> No
         player = await manager.join(room.id, "Player", None, "player")
         await manager.mark_ready(room.id, player.id)
         await manager.start(room.id, owner.id)
+        assert room.intro_kind == IntroKind.ROUND_START
+        await manager.advance_intro(room)
+        assert room.intro_kind == IntroKind.PARENT_SELECT
+        await manager.advance_intro(room)
         await manager.choose_question(room.id, owner.id, room.selection_question_ids[0])
+        assert room.intro_kind == IntroKind.PARENT_ANSWER
+        await manager.advance_intro(room)
         return room, owner
 
     room, owner = asyncio.run(prepare_room())

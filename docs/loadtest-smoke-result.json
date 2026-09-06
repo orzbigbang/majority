@@ -1,0 +1,62 @@
+{
+  "passed": true,
+  "failure": null,
+  "url": "http://localhost:8002",
+  "players": 2,
+  "games_completed": 1,
+  "elapsed_seconds": 53.31,
+  "last_room": "2X6Q",
+  "started_at": "2026-09-06T00:28:08.618834+00:00",
+  "server_logs": {
+    "checked": true,
+    "error_lines": []
+  },
+  "metrics": {
+    "answer_ack": {
+      "count": 4,
+      "p50_ms": 11.59,
+      "p95_ms": 12.37,
+      "p99_ms": 12.37,
+      "max_ms": 12.37
+    },
+    "phase_arrival_spread": {
+      "count": 21,
+      "p50_ms": 0.04,
+      "p95_ms": 10.47,
+      "p99_ms": 13.29,
+      "max_ms": 13.29
+    },
+    "reconnect": {
+      "count": 3,
+      "p50_ms": 20.84,
+      "p95_ms": 45.61,
+      "p99_ms": 45.61,
+      "max_ms": 45.61
+    },
+    "burst_send_span": {
+      "count": 2,
+      "p50_ms": 0.0,
+      "p95_ms": 0.0,
+      "p99_ms": 0.0,
+      "max_ms": 0.0
+    }
+  },
+  "gates": {
+    "ack_p95": true,
+    "ack_p99": true,
+    "spread_p95": true,
+    "burst_within_100ms": true,
+    "reconnect": true
+  },
+  "errors": [],
+  "last_states": {
+    "264fd4d8-1d93-4554-b9f0-08845242a245": {
+      "status": "FINISHED",
+      "turn": 2
+    },
+    "a5c3c25b-c7e7-419d-9df8-7947e409ff56": {
+      "status": "FINISHED",
+      "turn": 2
+    }
+  }
+}

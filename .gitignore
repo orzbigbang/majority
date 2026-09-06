@@ -4,6 +4,7 @@
 !frontend/.env.local.example
 node_modules/
 .next/
+.next-dev/
 .next-build/
 __pycache__/
 .pytest_cache/

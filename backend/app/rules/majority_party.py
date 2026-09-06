@@ -34,6 +34,7 @@ class MajorityPartyRules:
             majority_choice: Choice = parent_choice
         else:
             majority_choice = "A" if counts["A"] > counts["B"] else "B"
+        parent_is_majority = parent_choice == majority_choice
         changes = {player_id: 0 for player_id in value.player_ids}
 
         for player_id, choice in value.choices.items():
@@ -46,7 +47,8 @@ class MajorityPartyRules:
             paid = min(self.spec.minority_penalty, current_score - self.spec.score_floor) if pays_penalty else 0
             changes[player_id] -= paid
 
-            if player_id != value.parent_id and self.spec.parent_collects_from_minority:
+            parent_can_collect = parent_is_majority or not self.spec.parent_collects_only_when_majority
+            if player_id != value.parent_id and self.spec.parent_collects_from_minority and parent_can_collect:
                 parent_gain = self.spec.minority_penalty if self.spec.parent_collects_when_minority_has_zero else paid
                 changes[value.parent_id] += parent_gain
 

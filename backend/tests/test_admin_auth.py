@@ -20,3 +20,19 @@ def test_login_token_authorizes_a_later_request() -> None:
 
     assert login.status_code == 200
     assert response.status_code == 200
+
+
+def test_admin_can_delete_all_rooms() -> None:
+    with TestClient(app) as client:
+        token = client.post("/api/admin/login", json={"password": "change-me"}).json()["token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        client.delete("/api/admin/rooms", headers=headers)
+        client.post("/api/admin/rooms", headers=headers)
+        client.post("/api/admin/rooms", headers=headers)
+
+        response = client.delete("/api/admin/rooms", headers=headers)
+        rooms = client.get("/api/admin/rooms", headers=headers)
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "deleted": 2}
+    assert rooms.json() == []

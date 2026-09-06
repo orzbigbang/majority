@@ -3,13 +3,14 @@ from __future__ import annotations
 import asyncio
 import secrets
 from copy import deepcopy
+from contextlib import asynccontextmanager
 from datetime import timedelta
 from functools import wraps
 from uuid import uuid4
 
 from fastapi import HTTPException
 
-from .models import Answer, GameSettings, GameStatus, Player, Question, RoomState, now
+from .models import Answer, GameSettings, GameStatus, IntroKind, Player, Question, RoomState, now
 from .question_bank import default_questions
 from .repository.base import GameRepository, RoomConflictError
 from .rules import MAJORITY_PARTY_RULES, MajorityPartyRules, RoundInput
@@ -17,6 +18,24 @@ from .rules import MAJORITY_PARTY_RULES, MajorityPartyRules, RoundInput
 COUNTDOWN_START_CUE_DURATION = 1
 QUESTION_OPTION_COUNT = 3
 PARENT_DISCONNECT_GRACE_SECONDS = 8
+INTRO_DURATIONS = {
+    IntroKind.ROUND_START: 2.4,
+    IntroKind.PARENT_SELECT: 1.8,
+    IntroKind.PARENT_ANSWER: 1.8,
+    IntroKind.PLAYERS_ANSWER: 1.8,
+    IntroKind.RESULT_REVEAL: 2.4,
+}
+ALLOWED_STATUS_TRANSITIONS: dict[GameStatus, set[GameStatus]] = {
+    GameStatus.WAITING: {GameStatus.WAITING, GameStatus.COUNTDOWN, GameStatus.TURN_INTRO},
+    GameStatus.COUNTDOWN: {GameStatus.TURN_INTRO, GameStatus.PAUSED, GameStatus.FINISHED, GameStatus.WAITING},
+    GameStatus.TURN_INTRO: {GameStatus.TURN_INTRO, GameStatus.SELECTING, GameStatus.PARENT_ANSWERING, GameStatus.QUESTION, GameStatus.SHOW_RESULT, GameStatus.PAUSED, GameStatus.FINISHED, GameStatus.WAITING},
+    GameStatus.SELECTING: {GameStatus.SELECTING, GameStatus.TURN_INTRO, GameStatus.PAUSED, GameStatus.FINISHED, GameStatus.WAITING},
+    GameStatus.PARENT_ANSWERING: {GameStatus.SELECTING, GameStatus.TURN_INTRO, GameStatus.PAUSED, GameStatus.FINISHED, GameStatus.WAITING},
+    GameStatus.QUESTION: {GameStatus.TURN_INTRO, GameStatus.PAUSED, GameStatus.FINISHED, GameStatus.WAITING},
+    GameStatus.PAUSED: {GameStatus.COUNTDOWN, GameStatus.TURN_INTRO, GameStatus.SELECTING, GameStatus.PARENT_ANSWERING, GameStatus.QUESTION, GameStatus.SHOW_RESULT, GameStatus.FINISHED, GameStatus.WAITING},
+    GameStatus.SHOW_RESULT: {GameStatus.TURN_INTRO, GameStatus.PAUSED, GameStatus.FINISHED, GameStatus.WAITING},
+    GameStatus.FINISHED: {GameStatus.WAITING},
+}
 
 
 def retry_room_conflicts(operation):
@@ -62,8 +81,12 @@ class Room:
         self.selection_question_ids: list[str] = []
         self.used_question_ids: list[str] = []
         self.selection_started_at = None
+        self.intro_kind: IntroKind | None = None
+        self.intro_started_at = None
+        self.intro_automatic = False
         self.parent_answer_started_at = None
         self.parent_disconnected_at = None
+        self.parent_phase_remaining_seconds: float | None = None
         self.current_question_index = 0
         self.question_started_at = None
         self.countdown_started_at = None
@@ -110,8 +133,12 @@ class Room:
         self.selection_question_ids = list(state.selection_question_ids)
         self.used_question_ids = list(state.used_question_ids)
         self.selection_started_at = state.selection_started_at
+        self.intro_kind = state.intro_kind
+        self.intro_started_at = state.intro_started_at
+        self.intro_automatic = state.intro_automatic
         self.parent_answer_started_at = state.parent_answer_started_at
         self.parent_disconnected_at = state.parent_disconnected_at
+        self.parent_phase_remaining_seconds = state.parent_phase_remaining_seconds
         self.current_question_index = state.current_question_index
         self.question_started_at = state.question_started_at
         self.countdown_started_at = state.countdown_started_at
@@ -154,8 +181,12 @@ class Room:
             selection_question_ids=list(self.selection_question_ids),
             used_question_ids=list(self.used_question_ids),
             selection_started_at=self.selection_started_at,
+            intro_kind=self.intro_kind,
+            intro_started_at=self.intro_started_at,
+            intro_automatic=self.intro_automatic,
             parent_answer_started_at=self.parent_answer_started_at,
             parent_disconnected_at=self.parent_disconnected_at,
+            parent_phase_remaining_seconds=self.parent_phase_remaining_seconds,
             current_question_index=self.current_question_index,
             question_started_at=self.question_started_at,
             countdown_started_at=self.countdown_started_at,
@@ -190,6 +221,17 @@ class Room:
     def total_turns(self) -> int:
         return len(self.parent_turn_order) if self.parent_turn_order else self.round_count * len(self.parent_order or self.players)
 
+    def round_number_at(self, index: int | None = None) -> int:
+        target_index = self.current_question_index if index is None else index
+        if self.parent_turn_order and 0 <= target_index < len(self.parent_turn_order):
+            parent_id = self.parent_turn_order[target_index]
+            return min(self.round_count, self.parent_turn_order[:target_index + 1].count(parent_id))
+        return min(self.round_count, target_index // max(1, len(self.parent_order)) + 1)
+
+    @property
+    def intro_duration(self) -> float | None:
+        return INTRO_DURATIONS.get(self.intro_kind) if self.intro_kind else None
+
     def advance_clock_version(self) -> None:
         self.clock_version += 1
 
@@ -201,6 +243,8 @@ class Room:
         clock_phase = self.paused_status if self.status == GameStatus.PAUSED and self.paused_status else self.status
         if clock_phase == GameStatus.COUNTDOWN:
             clock_started_at, clock_duration = self.countdown_started_at, self.settings.countdown_duration + COUNTDOWN_START_CUE_DURATION
+        elif clock_phase == GameStatus.TURN_INTRO:
+            clock_started_at, clock_duration = self.intro_started_at, self.intro_duration
         elif clock_phase == GameStatus.SELECTING:
             clock_started_at, clock_duration = self.selection_started_at, self.settings.selection_duration
         elif clock_phase == GameStatus.PARENT_ANSWERING:
@@ -209,10 +253,13 @@ class Room:
             clock_started_at, clock_duration = self.question_started_at, self.settings.question_duration
         elif clock_phase == GameStatus.SHOW_RESULT:
             clock_started_at, clock_duration = self.result_started_at, self.settings.result_duration
-        clock_ends_at = clock_started_at + timedelta(seconds=clock_duration) if clock_started_at and clock_duration is not None and self.status != GameStatus.PAUSED else None
+        parent_clock_frozen = clock_phase in {GameStatus.SELECTING, GameStatus.PARENT_ANSWERING} and self.parent_phase_remaining_seconds is not None and clock_started_at is None
+        clock_ends_at = clock_started_at + timedelta(seconds=clock_duration) if clock_started_at and clock_duration is not None and self.status != GameStatus.PAUSED and not parent_clock_frozen else None
         clock_remaining_ms = (
             max(0, int(self.paused_remaining_seconds * 1000))
             if self.status == GameStatus.PAUSED and self.paused_remaining_seconds is not None
+            else max(0, int(self.parent_phase_remaining_seconds * 1000))
+            if parent_clock_frozen and self.parent_phase_remaining_seconds is not None
             else max(0, int((clock_ends_at - server_time).total_seconds() * 1000)) if clock_ends_at else 0
         )
         return {
@@ -231,6 +278,8 @@ class Room:
         current_parent = self.players.get(self.current_parent_id or "")
         if self.status == GameStatus.COUNTDOWN and self.countdown_started_at:
             deadlines.append(self.countdown_started_at + timedelta(seconds=self.settings.countdown_duration + COUNTDOWN_START_CUE_DURATION))
+        if self.status == GameStatus.TURN_INTRO and self.intro_started_at and self.intro_duration is not None:
+            deadlines.append(self.intro_started_at + timedelta(seconds=self.intro_duration))
         if self.status == GameStatus.SELECTING and self.selection_started_at and (not current_parent or current_parent.connected):
             deadlines.append(self.selection_started_at + timedelta(seconds=self.settings.selection_duration))
         if self.status == GameStatus.PARENT_ANSWERING and self.parent_answer_started_at and (not current_parent or current_parent.connected):
@@ -243,20 +292,30 @@ class Room:
             deadlines.append(self.result_started_at + timedelta(seconds=self.settings.result_duration))
         return min(deadlines) if deadlines else None
 
+    def timer_token(self) -> tuple:
+        return (self.clock_version, self.status, self.intro_kind, self.clock_deadline())
+
     def snapshot(self, include_question: bool = True) -> dict:
         question = self.current_question
         current_parent_id = self.current_parent_id
-        current_round = min(self.round_count, self.parent_turn_order[:self.current_question_index + 1].count(current_parent_id)) if current_parent_id and self.parent_turn_order else (min(self.round_count, self.current_question_index // len(self.parent_order) + 1) if self.parent_order else 1)
-        payload = {"room_id": self.id, "title": self.title, "status": self.status, "owner_id": self.owner_id, "players": [{"id": p.id, "username": p.username, "score": p.score, "connected": p.connected, "ready": p.ready} for p in self.players.values()], "current_question_index": self.current_question_index, "question_count": self.total_turns, "round_count": self.round_count, "current_round": current_round, "current_parent_id": self.current_parent_id, "answered": len(self.draft_answers), "settings": self.settings.model_dump(), "rules": self.rule_spec, "previous_game": self.previous_game, "clock": self.clock_metadata()}
+        current_round = self.round_number_at()
+        payload = {"room_id": self.id, "title": self.title, "status": self.status, "owner_id": self.owner_id, "players": [{"id": p.id, "username": p.username, "score": p.score, "connected": p.connected, "ready": p.ready} for p in self.players.values()], "current_question_index": self.current_question_index, "question_count": self.total_turns, "round_count": self.round_count, "current_round": current_round, "current_parent_id": self.current_parent_id, "answered": len(self.answers), "settings": self.settings.model_dump(), "rules": self.rule_spec, "previous_game": self.previous_game, "clock": self.clock_metadata()}
         if self.status == GameStatus.COUNTDOWN:
             payload.update({"phase_started_at": self.countdown_started_at.isoformat() if self.countdown_started_at else None, "phase_duration": self.settings.countdown_duration})
+        if self.status == GameStatus.TURN_INTRO:
+            payload.update({
+                "phase_started_at": self.intro_started_at.isoformat() if self.intro_started_at else None,
+                "phase_duration": self.intro_duration,
+                "intro": {"kind": self.intro_kind, "automatic": self.intro_automatic},
+            })
         if self.status == GameStatus.SELECTING:
             questions_by_id = {item.id: item for item in self.questions}
             payload["question_options"] = [{"id": questions_by_id[item_id].id, "title": questions_by_id[item_id].title} for item_id in self.selection_question_ids if item_id in questions_by_id]
             payload.update({"phase_started_at": self.selection_started_at.isoformat() if self.selection_started_at else None, "phase_duration": self.settings.selection_duration})
         if self.status == GameStatus.PARENT_ANSWERING:
             payload.update({"phase_started_at": self.parent_answer_started_at.isoformat() if self.parent_answer_started_at else None, "phase_duration": self.settings.question_duration})
-        if include_question and question and (self.status in {GameStatus.PARENT_ANSWERING, GameStatus.QUESTION} or (self.status == GameStatus.PAUSED and self.paused_status == GameStatus.QUESTION)):
+        intro_has_question = self.status == GameStatus.TURN_INTRO and self.intro_kind in {IntroKind.PARENT_ANSWER, IntroKind.PLAYERS_ANSWER, IntroKind.RESULT_REVEAL}
+        if include_question and question and (self.status in {GameStatus.PARENT_ANSWERING, GameStatus.QUESTION} or intro_has_question or (self.status == GameStatus.PAUSED and self.paused_status == GameStatus.QUESTION)):
             payload["question"] = {"id": question.id, "title": question.title, "option_a": question.option_a, "option_b": question.option_b, "duration": self.settings.question_duration, "started_at": self.question_started_at.isoformat() if self.question_started_at else None}
             if self.status == GameStatus.QUESTION:
                 payload.update({"phase_started_at": self.question_started_at.isoformat() if self.question_started_at else None, "phase_duration": self.settings.question_duration})
@@ -280,7 +339,52 @@ class GameManager:
 
     def _advance_clock(self, room: Room) -> None:
         room.advance_clock_version()
-        self.clock_changed.set()
+        if not room.lock.locked():
+            self.clock_changed.set()
+
+    @asynccontextmanager
+    async def _room_command(self, room: Room, expected_clock: tuple | None = None):
+        async with room.lock:
+            if expected_clock is not None:
+                deadline = room.clock_deadline()
+                if room.timer_token() != expected_clock or deadline is None or deadline > now():
+                    raise HTTPException(409, "ROOM_CLOCK_CHANGED")
+            before = room.to_state()
+            sessions = {player.id: player.session_id for player in room.players.values()}
+            try:
+                yield
+            except BaseException:
+                # Never roll back a newer state accepted from the repository watch.
+                if room.version == before.version:
+                    room.apply_state(before)
+                    for player_id, session_id in sessions.items():
+                        room.players[player_id].session_id = session_id
+                    if room.id not in self.rooms:
+                        self.rooms[room.id] = room
+                raise
+            finally:
+                if room.clock_version != before.clock_version:
+                    self.clock_changed.set()
+
+    @staticmethod
+    def _transition(room: Room, target: GameStatus) -> None:
+        if target not in ALLOWED_STATUS_TRANSITIONS[room.status]:
+            raise RuntimeError(f"Invalid game status transition: {room.status} -> {target}")
+        room.status = target
+
+    def _begin_intro(self, room: Room, kind: IntroKind, *, automatic: bool = False) -> None:
+        self._transition(room, GameStatus.TURN_INTRO)
+        room.intro_kind = kind
+        room.intro_started_at = now()
+        room.intro_automatic = automatic
+        room.parent_phase_remaining_seconds = None
+        self._advance_clock(room)
+
+    @staticmethod
+    def _clear_intro(room: Room) -> None:
+        room.intro_kind = None
+        room.intro_started_at = None
+        room.intro_automatic = False
 
     def _prepare_selection(self, room: Room) -> None:
         available = [question for question in room.questions if question.id not in room.used_question_ids]
@@ -293,16 +397,18 @@ class GameManager:
             question = secrets.choice(candidates)
             selected_ids.append(question.id)
             candidates.remove(question)
-        room.status = GameStatus.SELECTING
+        self._transition(room, GameStatus.SELECTING)
+        self._clear_intro(room)
         room.selected_question = None
         room.selection_question_ids = selected_ids
-        room.selection_started_at = now()
         current_parent = room.players.get(room.current_parent_id or "")
-        room.parent_disconnected_at = now() if current_parent and not current_parent.connected else None
+        parent_is_available = not current_parent or current_parent.connected
+        room.selection_started_at = now() if parent_is_available else None
+        room.parent_phase_remaining_seconds = None if parent_is_available else float(room.settings.selection_duration)
+        room.parent_disconnected_at = None if parent_is_available else now()
         self._advance_clock(room)
 
-    @staticmethod
-    def _select_question(room: Room, question_id: str) -> None:
+    def _select_question(self, room: Room, question_id: str, *, automatic: bool = False) -> None:
         question = next((item for item in room.questions if item.id == question_id), None)
         if not question or question_id not in room.selection_question_ids:
             raise HTTPException(404, "QUESTION_NOT_FOUND")
@@ -311,13 +417,14 @@ class GameManager:
             room.used_question_ids.append(question_id)
         room.selection_question_ids.clear()
         room.selection_started_at = None
-        room.parent_answer_started_at = now()
+        room.parent_answer_started_at = None
         room.parent_disconnected_at = None
+        room.parent_phase_remaining_seconds = None
         room.answers.clear()
         room.draft_answers.clear()
         room.last_result = None
         room.question_started_at = None
-        room.status = GameStatus.PARENT_ANSWERING
+        self._begin_intro(room, IntroKind.PARENT_ANSWER, automatic=automatic)
 
     def load_persistent_data(self, repository: GameRepository) -> None:
         self.repository = repository
@@ -454,7 +561,7 @@ class GameManager:
     @retry_room_conflicts
     async def join(self, room_id: str, username: str, session_id: str | None, player_id: str | None = None) -> Player:
         room = self.room(room_id)
-        async with room.lock:
+        async with self._room_command(room):
             if player_id and player_id in room.players:
                 existing = room.players[player_id]
                 if not existing.matches_session(session_id):
@@ -496,7 +603,7 @@ class GameManager:
     @retry_room_conflicts
     async def update_room(self, room_id: str, game_name: str | None, max_players: int | None) -> Room:
         room = self.room(room_id)
-        async with room.lock:
+        async with self._room_command(room):
             if room.status != GameStatus.WAITING:
                 raise HTTPException(409, "Only waiting rooms can be edited")
             if max_players is not None:
@@ -521,7 +628,7 @@ class GameManager:
         title: str | None = None,
     ) -> Room:
         room = self.room(room_id)
-        async with room.lock:
+        async with self._room_command(room):
             if room.status != GameStatus.WAITING:
                 raise HTTPException(409, "GAME_ALREADY_STARTED")
             if requested_by != room.owner_id:
@@ -542,7 +649,7 @@ class GameManager:
     @retry_room_conflicts
     async def delete_room(self, room_id: str) -> Room:
         room = self.room(room_id)
-        async with room.lock:
+        async with self._room_command(room):
             if room.status != GameStatus.WAITING:
                 raise HTTPException(409, "Only waiting rooms can be deleted")
             await self._delete_room_async(room)
@@ -552,7 +659,7 @@ class GameManager:
     @retry_room_conflicts
     async def start(self, room_id: str, requested_by: str | None = None) -> Room:
         room = self.room(room_id)
-        async with room.lock:
+        async with self._room_command(room):
             if room.status != GameStatus.WAITING:
                 raise HTTPException(409, "Game is not waiting")
             if requested_by is not None and requested_by != room.owner_id:
@@ -567,7 +674,9 @@ class GameManager:
             room.selection_question_ids.clear()
             room.used_question_ids.clear()
             room.selection_started_at = None
+            self._clear_intro(room)
             room.parent_disconnected_at = None
+            room.parent_phase_remaining_seconds = None
             room.current_question_index = 0
             room.answers.clear()
             room.draft_answers.clear()
@@ -578,17 +687,18 @@ class GameManager:
                 player.score = starting_scores[player.id]
                 player.answer_time_ms = 0
             if room.settings.countdown_duration:
-                room.status, room.countdown_started_at = GameStatus.COUNTDOWN, now()
+                self._transition(room, GameStatus.COUNTDOWN)
+                room.countdown_started_at = now()
                 self._advance_clock(room)
             else:
-                self._prepare_selection(room)
+                self._begin_intro(room, IntroKind.ROUND_START)
             await self._persist_room_async(room)
             return room
 
     @retry_room_conflicts
     async def mark_ready(self, room_id: str, player_id: str, ready: bool | None = None) -> Room:
         room = self.room(room_id)
-        async with room.lock:
+        async with self._room_command(room):
             if room.status != GameStatus.WAITING:
                 raise HTTPException(409, "GAME_ALREADY_STARTED")
             player = room.players.get(player_id)
@@ -603,7 +713,7 @@ class GameManager:
     @retry_room_conflicts
     async def transfer_owner(self, room_id: str, owner_id: str, new_owner_id: str) -> Room:
         room = self.room(room_id)
-        async with room.lock:
+        async with self._room_command(room):
             if room.status != GameStatus.WAITING:
                 raise HTTPException(409, "GAME_ALREADY_STARTED")
             if owner_id != room.owner_id:
@@ -619,19 +729,34 @@ class GameManager:
     @retry_room_conflicts
     async def set_connected(self, room_id: str, player_id: str, connected: bool) -> Room:
         room = self.room(room_id)
-        async with room.lock:
+        async with self._room_command(room):
             player = room.players.get(player_id)
             if not player:
                 raise HTTPException(401, "INVALID_SESSION")
+            was_connected = player.connected
             player.connected = connected
             if room.status in {GameStatus.SELECTING, GameStatus.PARENT_ANSWERING}:
                 current_parent = room.players.get(room.current_parent_id or "")
-                if player_id == room.current_parent_id:
+                if player_id == room.current_parent_id and was_connected != connected:
                     if connected:
-                        room.parent_disconnected_at = None
+                        duration = room.settings.selection_duration if room.status == GameStatus.SELECTING else room.settings.question_duration
+                        remaining = room.parent_phase_remaining_seconds if room.parent_phase_remaining_seconds is not None else float(duration)
+                        restored_started_at = now() - timedelta(seconds=max(0, duration - remaining))
                         if room.status == GameStatus.SELECTING:
-                            room.selection_started_at = now()
+                            room.selection_started_at = restored_started_at
+                        else:
+                            room.parent_answer_started_at = restored_started_at
+                        room.parent_phase_remaining_seconds = None
+                        room.parent_disconnected_at = None
                     else:
+                        started_at = room.selection_started_at if room.status == GameStatus.SELECTING else room.parent_answer_started_at
+                        duration = room.settings.selection_duration if room.status == GameStatus.SELECTING else room.settings.question_duration
+                        elapsed = (now() - started_at).total_seconds() if started_at else 0
+                        room.parent_phase_remaining_seconds = max(0, duration - elapsed)
+                        if room.status == GameStatus.SELECTING:
+                            room.selection_started_at = None
+                        else:
+                            room.parent_answer_started_at = None
                         room.parent_disconnected_at = now()
                     self._advance_clock(room)
                 elif connected and current_parent and not current_parent.connected and room.parent_disconnected_at is None:
@@ -643,7 +768,7 @@ class GameManager:
     @retry_room_conflicts
     async def leave(self, room_id: str, player_id: str) -> Room:
         room = self.room(room_id)
-        async with room.lock:
+        async with self._room_command(room):
             # Socket cleanup can race when the same player has multiple connections.
             if room.players.pop(player_id, None) is None:
                 return room
@@ -667,21 +792,52 @@ class GameManager:
             return room
 
     @retry_room_conflicts
-    async def begin_selection(self, room: Room) -> Room:
+    async def begin_round_intro(self, room: Room, *, expected_clock: tuple | None = None) -> Room:
         room = self.room(room.id)
-        async with room.lock:
+        async with self._room_command(room, expected_clock):
             if room.status != GameStatus.COUNTDOWN:
                 raise HTTPException(409, "Countdown is not active")
-            room.status = GameStatus.SELECTING
             room.countdown_started_at = None
-            self._prepare_selection(room)
+            self._begin_intro(room, IntroKind.ROUND_START)
+            await self._persist_room_async(room)
+            return room
+
+    @retry_room_conflicts
+    async def advance_intro(self, room: Room, *, expected_clock: tuple | None = None) -> Room:
+        room = self.room(room.id)
+        async with self._room_command(room, expected_clock):
+            if room.status != GameStatus.TURN_INTRO or not room.intro_kind:
+                raise HTTPException(409, "TURN_INTRO_NOT_ACTIVE")
+            kind = room.intro_kind
+            if kind == IntroKind.ROUND_START:
+                self._begin_intro(room, IntroKind.PARENT_SELECT)
+            elif kind == IntroKind.PARENT_SELECT:
+                self._prepare_selection(room)
+            elif kind == IntroKind.PARENT_ANSWER:
+                self._clear_intro(room)
+                self._transition(room, GameStatus.PARENT_ANSWERING)
+                current_parent = room.players.get(room.current_parent_id or "")
+                parent_is_available = not current_parent or current_parent.connected
+                room.parent_answer_started_at = now() if parent_is_available else None
+                room.parent_phase_remaining_seconds = None if parent_is_available else float(room.settings.question_duration)
+                room.parent_disconnected_at = None if parent_is_available else now()
+                self._advance_clock(room)
+            elif kind == IntroKind.PLAYERS_ANSWER:
+                self._clear_intro(room)
+                self._transition(room, GameStatus.QUESTION)
+                room.parent_disconnected_at = None
+                room.parent_phase_remaining_seconds = None
+                room.question_started_at = now()
+                self._advance_clock(room)
+            else:
+                raise HTTPException(409, "RESULT_INTRO_REQUIRES_SCORING")
             await self._persist_room_async(room)
             return room
 
     @retry_room_conflicts
     async def choose_question(self, room_id: str, player_id: str, question_id: str) -> Room:
         room = self.room(room_id)
-        async with room.lock:
+        async with self._room_command(room):
             if room.status != GameStatus.SELECTING:
                 raise HTTPException(409, "QUESTION_SELECTION_NOT_ACTIVE")
             if player_id != room.current_parent_id:
@@ -689,25 +845,23 @@ class GameManager:
             if room.selection_started_at and now() >= room.selection_started_at + timedelta(seconds=room.settings.selection_duration):
                 raise HTTPException(409, "QUESTION_SELECTION_EXPIRED")
             self._select_question(room, question_id)
-            self._advance_clock(room)
             await self._persist_room_async(room)
             return room
 
     @retry_room_conflicts
-    async def auto_choose_question(self, room: Room) -> Room:
+    async def auto_choose_question(self, room: Room, *, expected_clock: tuple | None = None) -> Room:
         room = self.room(room.id)
-        async with room.lock:
+        async with self._room_command(room, expected_clock):
             if room.status != GameStatus.SELECTING or not room.selection_question_ids:
                 raise HTTPException(409, "QUESTION_SELECTION_NOT_ACTIVE")
-            self._select_question(room, secrets.choice(room.selection_question_ids))
-            self._advance_clock(room)
+            self._select_question(room, secrets.choice(room.selection_question_ids), automatic=True)
             await self._persist_room_async(room)
             return room
 
     @retry_room_conflicts
-    async def defer_disconnected_parent(self, room: Room) -> Room:
+    async def defer_disconnected_parent(self, room: Room, *, expected_clock: tuple | None = None) -> Room:
         room = self.room(room.id)
-        async with room.lock:
+        async with self._room_command(room, expected_clock):
             if room.status not in {GameStatus.SELECTING, GameStatus.PARENT_ANSWERING}:
                 raise HTTPException(409, "PARENT_NOT_SELECTING")
             current_parent = room.players.get(room.current_parent_id or "")
@@ -739,19 +893,29 @@ class GameManager:
     @retry_room_conflicts
     async def pause(self, room_id: str) -> Room:
         room = self.room(room_id)
-        async with room.lock:
-            if room.status not in {GameStatus.COUNTDOWN, GameStatus.QUESTION, GameStatus.SHOW_RESULT}:
+        async with self._room_command(room):
+            if room.status not in {GameStatus.COUNTDOWN, GameStatus.TURN_INTRO, GameStatus.SELECTING, GameStatus.PARENT_ANSWERING, GameStatus.QUESTION, GameStatus.SHOW_RESULT}:
                 raise HTTPException(409, "GAME_NOT_PAUSABLE")
             if room.status == GameStatus.COUNTDOWN:
                 started_at, duration = room.countdown_started_at, room.settings.countdown_duration + COUNTDOWN_START_CUE_DURATION
+            elif room.status == GameStatus.TURN_INTRO:
+                started_at, duration = room.intro_started_at, room.intro_duration or 0
+            elif room.status == GameStatus.SELECTING:
+                started_at, duration = room.selection_started_at, room.settings.selection_duration
+            elif room.status == GameStatus.PARENT_ANSWERING:
+                started_at, duration = room.parent_answer_started_at, room.settings.question_duration
             elif room.status == GameStatus.QUESTION:
                 started_at, duration = room.question_started_at, room.settings.question_duration
             else:
                 started_at, duration = room.result_started_at, room.settings.result_duration
-            elapsed = (now() - started_at).total_seconds() if started_at else 0
-            room.paused_remaining_seconds = max(0, duration - elapsed)
+            if room.status in {GameStatus.SELECTING, GameStatus.PARENT_ANSWERING} and room.parent_phase_remaining_seconds is not None:
+                room.paused_remaining_seconds = room.parent_phase_remaining_seconds
+                room.parent_disconnected_at = None
+            else:
+                elapsed = (now() - started_at).total_seconds() if started_at else 0
+                room.paused_remaining_seconds = max(0, duration - elapsed)
             room.paused_status = room.status
-            room.status = GameStatus.PAUSED
+            self._transition(room, GameStatus.PAUSED)
             self._advance_clock(room)
             await self._persist_room_async(room)
             return room
@@ -759,17 +923,37 @@ class GameManager:
     @retry_room_conflicts
     async def resume(self, room_id: str) -> Room:
         room = self.room(room_id)
-        async with room.lock:
+        async with self._room_command(room):
             if room.status != GameStatus.PAUSED or not room.paused_status or room.paused_remaining_seconds is None:
                 raise HTTPException(409, "GAME_NOT_PAUSED")
             resumed_status, remaining = room.paused_status, room.paused_remaining_seconds
             if resumed_status == GameStatus.COUNTDOWN:
                 room.countdown_started_at = now() - timedelta(seconds=room.settings.countdown_duration + COUNTDOWN_START_CUE_DURATION - remaining)
+            elif resumed_status == GameStatus.TURN_INTRO:
+                room.intro_started_at = now() - timedelta(seconds=(room.intro_duration or 0) - remaining)
+            elif resumed_status in {GameStatus.SELECTING, GameStatus.PARENT_ANSWERING}:
+                current_parent = room.players.get(room.current_parent_id or "")
+                if current_parent and not current_parent.connected:
+                    room.parent_phase_remaining_seconds = remaining
+                    room.parent_disconnected_at = room.parent_disconnected_at or now()
+                    if resumed_status == GameStatus.SELECTING:
+                        room.selection_started_at = None
+                    else:
+                        room.parent_answer_started_at = None
+                else:
+                    duration = room.settings.selection_duration if resumed_status == GameStatus.SELECTING else room.settings.question_duration
+                    restored_started_at = now() - timedelta(seconds=duration - remaining)
+                    if resumed_status == GameStatus.SELECTING:
+                        room.selection_started_at = restored_started_at
+                    else:
+                        room.parent_answer_started_at = restored_started_at
+                    room.parent_phase_remaining_seconds = None
+                    room.parent_disconnected_at = None
             elif resumed_status == GameStatus.QUESTION:
                 room.question_started_at = now() - timedelta(seconds=room.settings.question_duration - remaining)
             elif resumed_status == GameStatus.SHOW_RESULT:
                 room.result_started_at = now() - timedelta(seconds=room.settings.result_duration - remaining)
-            room.status = resumed_status
+            self._transition(room, resumed_status)
             room.paused_status = None
             room.paused_remaining_seconds = None
             self._advance_clock(room)
@@ -779,14 +963,14 @@ class GameManager:
     @retry_room_conflicts
     async def reset(self, room_id: str, requested_by: str | None = None) -> Room:
         room = self.room(room_id)
-        async with room.lock:
+        async with self._room_command(room):
             if requested_by is not None and requested_by not in room.players:
                 raise HTTPException(401, "INVALID_SESSION")
             if requested_by is not None and room.status != GameStatus.FINISHED:
                 raise HTTPException(409, "GAME_NOT_FINISHED")
             if room.status == GameStatus.FINISHED:
                 room.previous_game = {"leaderboard": deepcopy(self.leaderboard(room)), "review": deepcopy(room.history)}
-            room.status = GameStatus.WAITING
+            self._transition(room, GameStatus.WAITING)
             room.current_question_index = 0
             room.parent_order.clear()
             room.parent_turn_order.clear()
@@ -794,7 +978,9 @@ class GameManager:
             room.selection_question_ids.clear()
             room.used_question_ids.clear()
             room.selection_started_at = None
+            self._clear_intro(room)
             room.parent_disconnected_at = None
+            room.parent_phase_remaining_seconds = None
             room.answers.clear()
             room.draft_answers.clear()
             room.question_started_at = None
@@ -821,10 +1007,12 @@ class GameManager:
     @retry_room_conflicts
     async def end(self, room_id: str) -> Room:
         room = self.room(room_id)
-        async with room.lock:
+        async with self._room_command(room):
             if room.status in {GameStatus.WAITING, GameStatus.FINISHED}:
                 raise HTTPException(409, "GAME_NOT_RUNNING")
-            room.status = GameStatus.FINISHED
+            self._transition(room, GameStatus.FINISHED)
+            self._clear_intro(room)
+            room.parent_phase_remaining_seconds = None
             room.paused_status = None
             room.paused_remaining_seconds = None
             self._advance_clock(room)
@@ -834,7 +1022,7 @@ class GameManager:
     @retry_room_conflicts
     async def select_answer(self, room_id: str, player_id: str, question_id: str, choice: str) -> Room:
         room = self.room(room_id)
-        async with room.lock:
+        async with self._room_command(room):
             answer = self._validated_answer(room, player_id, question_id, choice)
             room.draft_answers[player_id] = answer
             await self._persist_room_async(room)
@@ -843,15 +1031,14 @@ class GameManager:
     @retry_room_conflicts
     async def answer(self, room_id: str, player_id: str, question_id: str, choice: str) -> Room:
         room = self.room(room_id)
-        async with room.lock:
+        async with self._room_command(room):
             answer = self._validated_answer(room, player_id, question_id, choice)
             room.draft_answers[player_id] = answer
             room.answers[player_id] = answer
             if room.status == GameStatus.PARENT_ANSWERING:
-                room.status = GameStatus.QUESTION
                 room.parent_answer_started_at = None
-                room.question_started_at = now()
-                self._advance_clock(room)
+                room.question_started_at = None
+                self._begin_intro(room, IntroKind.PLAYERS_ANSWER)
             await self._persist_room_async(room)
             return room
 
@@ -872,9 +1059,9 @@ class GameManager:
         return Answer(player_id=player_id, question_id=question_id, choice=choice)
 
     @retry_room_conflicts
-    async def auto_answer_parent(self, room: Room) -> Room:
+    async def auto_answer_parent(self, room: Room, *, expected_clock: tuple | None = None) -> Room:
         room = self.room(room.id)
-        async with room.lock:
+        async with self._room_command(room, expected_clock):
             if room.status != GameStatus.PARENT_ANSWERING or not room.current_question or not room.current_parent_id:
                 raise HTTPException(409, "PARENT_ANSWER_NOT_ACTIVE")
             parent_id = room.current_parent_id
@@ -885,29 +1072,53 @@ class GameManager:
             )
             room.draft_answers[parent_id] = answer
             room.answers[parent_id] = answer
-            room.status = GameStatus.QUESTION
             room.parent_answer_started_at = None
-            room.question_started_at = now()
-            self._advance_clock(room)
+            room.question_started_at = None
+            self._begin_intro(room, IntroKind.PLAYERS_ANSWER, automatic=True)
             await self._persist_room_async(room)
             return room
 
     @retry_room_conflicts
-    async def lock_and_score(self, room: Room) -> dict:
+    async def begin_result_reveal(self, room: Room, *, expected_clock: tuple | None = None) -> Room:
         room = self.room(room.id)
-        async with room.lock:
+        async with self._room_command(room, expected_clock):
             if room.status != GameStatus.QUESTION:
                 raise HTTPException(409, "No active question")
-            room.status = GameStatus.LOCK
+            self._begin_intro(room, IntroKind.RESULT_REVEAL)
+            await self._persist_room_async(room)
+            return room
+
+    @retry_room_conflicts
+    async def lock_and_score(self, room: Room, *, expected_clock: tuple | None = None) -> dict:
+        room = self.room(room.id)
+        async with self._room_command(room, expected_clock):
+            if room.status != GameStatus.TURN_INTRO or room.intro_kind != IntroKind.RESULT_REVEAL:
+                raise HTTPException(409, "No active question")
             question = room.current_question
             assert question
-            room.answers = {**room.answers, **room.draft_answers}
+            # A confirmed answer is authoritative. A later unconfirmed click only
+            # updates the draft and must not replace it when the timer expires.
+            scored_answers = {**room.draft_answers, **room.answers}
+            automatic_answered_at = (
+                room.question_started_at + timedelta(seconds=room.settings.question_duration)
+                if room.question_started_at
+                else now()
+            )
+            for player_id in room.players:
+                if player_id in scored_answers:
+                    continue
+                scored_answers[player_id] = Answer(
+                    player_id=player_id,
+                    question_id=question.id,
+                    choice=secrets.choice(("A", "B")),
+                    answered_at=automatic_answered_at,
+                )
             parent_id = room.current_parent_id
             assert parent_id
             resolution = self.rules.settle_round(RoundInput(
                 player_ids=tuple(room.players),
                 parent_id=parent_id,
-                choices={player_id: answer.choice for player_id, answer in room.answers.items()},
+                choices={player_id: answer.choice for player_id, answer in scored_answers.items()},
                 scores={player.id: player.score for player in room.players.values()},
             ))
             counts = resolution.counts
@@ -915,7 +1126,7 @@ class GameManager:
             results = resolution.score_changes
             question_started_at = room.question_started_at or now()
             for player in room.players.values():
-                answer = room.answers.get(player.id)
+                answer = scored_answers.get(player.id)
                 elapsed_ms = int((answer.answered_at - question_started_at).total_seconds() * 1000) if answer else room.settings.question_duration * 1000
                 player.answer_time_ms += max(0, elapsed_ms)
             for player_id, score in resolution.scores_after.items():
@@ -923,13 +1134,15 @@ class GameManager:
             review = {
                 "question": {"id": question.id, "title": question.title, "option_a": question.option_a, "option_b": question.option_b},
                 "counts": counts,
-                "answers": [{"player_id": player.id, "username": player.username, "choice": room.answers.get(player.id).choice if player.id in room.answers else None} for player in room.players.values()],
+                "answers": [{"player_id": player.id, "username": player.username, "choice": scored_answers.get(player.id).choice if player.id in scored_answers else None} for player in room.players.values()],
                 "scores": results,
                 "parent_id": parent_id,
                 "majority_choice": majority_choice,
             }
+            room.answers = scored_answers
             room.history.append(review)
-            room.status = GameStatus.SHOW_RESULT
+            self._clear_intro(room)
+            self._transition(room, GameStatus.SHOW_RESULT)
             room.result_started_at = now()
             room.last_result = {"question_id": question.id, "question": review["question"], "counts": counts, "answers": review["answers"], "scores": results, "parent_id": parent_id, "majority_choice": majority_choice, "leaderboard": self.leaderboard(room)}
             self._advance_clock(room)
@@ -937,11 +1150,12 @@ class GameManager:
             return room.last_result
 
     @retry_room_conflicts
-    async def next(self, room_id: str) -> Room:
+    async def next(self, room_id: str, *, expected_clock: tuple | None = None) -> Room:
         room = self.room(room_id)
-        async with room.lock:
-            if room.status not in {GameStatus.SHOW_RESULT, GameStatus.LOCK}:
+        async with self._room_command(room, expected_clock):
+            if room.status != GameStatus.SHOW_RESULT:
                 raise HTTPException(409, "Question must be scored first")
+            previous_round = room.round_number_at()
             room.current_question_index += 1
             room.answers.clear()
             room.draft_answers.clear()
@@ -950,13 +1164,16 @@ class GameManager:
             room.result_started_at = None
             room.question_started_at = None
             if room.current_question_index >= room.total_turns:
-                room.status = GameStatus.FINISHED
+                self._transition(room, GameStatus.FINISHED)
+                self._clear_intro(room)
                 room.selection_question_ids.clear()
                 room.selection_started_at = None
                 room.parent_disconnected_at = None
+                room.parent_phase_remaining_seconds = None
                 self._advance_clock(room)
             else:
-                self._prepare_selection(room)
+                next_round = room.round_number_at()
+                self._begin_intro(room, IntroKind.ROUND_START if next_round > previous_round else IntroKind.PARENT_SELECT)
             await self._persist_room_async(room)
             return room
 

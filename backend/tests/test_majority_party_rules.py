@@ -54,12 +54,12 @@ def test_zero_point_minority_stays_at_zero_but_parent_still_gains():
     assert result.scores_after == {"parent": 3, "ally": 2, "minority": 0}
 
 
-def test_minority_parent_pays_the_table_and_can_collect_from_another_minority():
+def test_minority_parent_loses_one_and_does_not_collect_from_other_minority_players():
     result = settle({"parent": "B", "a": "A", "b": "A", "c": "B", "d": "A"})
 
     assert result.majority_choice == "A"
-    assert result.score_changes == {"parent": 0, "a": 1, "b": 1, "c": -1, "d": 1}
-    assert result.scores_after == {"parent": 1, "a": 2, "b": 2, "c": 0, "d": 2}
+    assert result.score_changes == {"parent": -1, "a": 1, "b": 1, "c": -1, "d": 1}
+    assert result.scores_after == {"parent": 0, "a": 2, "b": 2, "c": 0, "d": 2}
 
 
 def test_unanswered_player_is_not_counted_or_scored():
@@ -108,3 +108,17 @@ def test_rule_flags_control_zero_point_collection_and_parent_table_payment():
 
     assert zero_result.score_changes["parent"] == 1
     assert parent_minority.score_changes["parent"] == 0
+
+
+def test_rule_flag_can_allow_a_minority_parent_to_collect():
+    rules = MajorityPartyRules(RuleSpec(parent_collects_only_when_majority=False))
+    result = rules.settle_round(
+        RoundInput(
+            ("parent", "a", "b", "c", "d"),
+            "parent",
+            {"parent": "B", "a": "A", "b": "A", "c": "B", "d": "A"},
+            {player_id: 1 for player_id in ("parent", "a", "b", "c", "d")},
+        )
+    )
+
+    assert result.score_changes["parent"] == 0

@@ -16,13 +16,21 @@ def now() -> datetime:
 class GameStatus(StrEnum):
     WAITING = "WAITING"
     COUNTDOWN = "COUNTDOWN"
+    TURN_INTRO = "TURN_INTRO"
     SELECTING = "SELECTING"
     PARENT_ANSWERING = "PARENT_ANSWERING"
     QUESTION = "QUESTION"
     PAUSED = "PAUSED"
-    LOCK = "LOCK"
     SHOW_RESULT = "SHOW_RESULT"
     FINISHED = "FINISHED"
+
+
+class IntroKind(StrEnum):
+    ROUND_START = "ROUND_START"
+    PARENT_SELECT = "PARENT_SELECT"
+    PARENT_ANSWER = "PARENT_ANSWER"
+    PLAYERS_ANSWER = "PLAYERS_ANSWER"
+    RESULT_REVEAL = "RESULT_REVEAL"
 
 
 class Question(BaseModel):
@@ -195,8 +203,12 @@ class RoomState(BaseModel):
     selection_question_ids: list[str] = Field(default_factory=list)
     used_question_ids: list[str] = Field(default_factory=list)
     selection_started_at: datetime | None = None
+    intro_kind: IntroKind | None = None
+    intro_started_at: datetime | None = None
+    intro_automatic: bool = False
     parent_answer_started_at: datetime | None = None
     parent_disconnected_at: datetime | None = None
+    parent_phase_remaining_seconds: float | None = None
     current_question_index: int = 0
     question_started_at: datetime | None = None
     countdown_started_at: datetime | None = None

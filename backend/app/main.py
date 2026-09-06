@@ -16,10 +16,11 @@ from uuid import uuid4
 from fastapi import Depends, FastAPI, Header, HTTPException, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import ValidationError
+from starlette.websockets import WebSocketState
 
 from .game import GameManager
 from .avatar_storage import AvatarStorage
-from .models import AnswerPayload, EmojiReactionPayload, GameHistoryAnswer, GameHistoryRecord, GameSettings, GameStatus, IdentityRequest, JoinRequest, LoginRequest, PlayerProfileUpdate, Question, QuestionSelectionPayload, RoomCreateRequest, RoomSettingsUpdate, RoomUpdate, UserProfile, UserProfileUpdate, now
+from .models import AnswerPayload, EmojiReactionPayload, GameHistoryAnswer, GameHistoryRecord, GameSettings, GameStatus, IdentityRequest, IntroKind, JoinRequest, LoginRequest, PlayerProfileUpdate, Question, QuestionSelectionPayload, RoomCreateRequest, RoomSettingsUpdate, RoomUpdate, UserProfile, UserProfileUpdate, now
 from .repository import FirestoreGameRepository
 from .repository.base import GameRepository
 
@@ -162,6 +163,27 @@ async def broadcast(room_id: str, message_type: str, payload: dict) -> None:
     await asyncio.gather(*(send_message(ws, message_type, payload, droppable=droppable) for ws in targets))
 
 
+async def send_to_player(room_id: str, player_id: str, message_type: str, payload: dict) -> None:
+    targets = tuple(
+        ws for ws in connections.get(room_id, set())
+        if websocket_players.get(ws) == (room_id, player_id)
+    )
+    if targets:
+        await asyncio.gather(*(send_message(ws, message_type, payload) for ws in targets))
+
+
+async def disconnect_deleted_room(room_id: str) -> None:
+    await broadcast(room_id, "room_deleted", {"room_id": room_id})
+    for websocket in connections.pop(room_id, set()):
+        try:
+            await websocket.close(code=1000)
+        except Exception:
+            pass
+        websocket_send_locks.pop(websocket, None)
+        websocket_priority_waiters.pop(websocket, None)
+    clear_room_reactions(room_id)
+
+
 def _token_part(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
 
@@ -205,6 +227,9 @@ async def lifespan(_: FastAPI):
     room_watch = None
     if repository:
         manager.load_persistent_data(repository)
+        for restored_room in list(manager.rooms.values()):
+            if restored_room.status == GameStatus.FINISHED:
+                await asyncio.to_thread(save_finished_game, restored_room)
         event_loop = asyncio.get_running_loop()
 
         async def apply_remote_room(room_id: str, state) -> None:
@@ -223,29 +248,40 @@ async def lifespan(_: FastAPI):
         while True:
             manager.clock_changed.clear()
             current_time = now()
-            active_rooms = [(room, deadline) for room in list(manager.rooms.values()) if (deadline := room.clock_deadline()) is not None]
-            due_rooms = [room for room, deadline in active_rooms if deadline <= current_time]
-            for room in due_rooms:
+            active_rooms = [(room, deadline, room.timer_token()) for room in list(manager.rooms.values()) if (deadline := room.clock_deadline()) is not None]
+            due_rooms = [(room, token) for room, deadline, token in active_rooms if deadline <= current_time]
+            for room, expected_clock in due_rooms:
                 try:
                     if room.status == GameStatus.COUNTDOWN:
-                        changed = await manager.begin_selection(room)
+                        changed = await manager.begin_round_intro(room, expected_clock=expected_clock)
                         await broadcast(changed.id, "game_state", changed.snapshot())
+                    elif room.status == GameStatus.TURN_INTRO:
+                        if room.intro_kind == IntroKind.RESULT_REVEAL:
+                            result = await manager.lock_and_score(room, expected_clock=expected_clock)
+                            changed = manager.room(room.id)
+                            await broadcast(changed.id, "game_state", changed.snapshot())
+                            await broadcast(changed.id, "result", result)
+                        else:
+                            changed = await manager.advance_intro(room, expected_clock=expected_clock)
+                            await broadcast(changed.id, "game_state", changed.snapshot())
                     elif room.status in {GameStatus.SELECTING, GameStatus.PARENT_ANSWERING} and room.parent_disconnected_at and (current_parent := room.players.get(room.current_parent_id or "")) and not current_parent.connected:
-                        changed = await manager.defer_disconnected_parent(room)
+                        changed = await manager.defer_disconnected_parent(room, expected_clock=expected_clock)
                         await broadcast(changed.id, "game_state", changed.snapshot())
                     elif room.status == GameStatus.SELECTING:
-                        changed = await manager.auto_choose_question(room)
+                        changed = await manager.auto_choose_question(room, expected_clock=expected_clock)
                         await broadcast(changed.id, "game_state", changed.snapshot())
                     elif room.status == GameStatus.PARENT_ANSWERING:
-                        changed = await manager.auto_answer_parent(room)
+                        changed = await manager.auto_answer_parent(room, expected_clock=expected_clock)
+                        parent_id = changed.current_parent_id
+                        parent_answer = changed.answers.get(parent_id or "")
+                        if parent_id and parent_answer:
+                            await send_to_player(changed.id, parent_id, "answer_saved", {"choice": parent_answer.choice, "automatic": True})
                         await broadcast(changed.id, "game_state", changed.snapshot())
                     elif room.status == GameStatus.QUESTION:
-                        result = await manager.lock_and_score(room)
-                        changed = manager.room(room.id)
+                        changed = await manager.begin_result_reveal(room, expected_clock=expected_clock)
                         await broadcast(changed.id, "game_state", changed.snapshot())
-                        await broadcast(changed.id, "result", result)
                     elif room.status == GameStatus.SHOW_RESULT:
-                        changed = await manager.next(room.id)
+                        changed = await manager.next(room.id, expected_clock=expected_clock)
                         await asyncio.to_thread(save_finished_game, changed)
                         await broadcast(changed.id, "game_state", changed.snapshot())
                 except HTTPException as exc:
@@ -255,7 +291,7 @@ async def lifespan(_: FastAPI):
                     logger.exception("Could not advance room %s", room.id)
             if due_rooms:
                 continue
-            nearest_deadline = min((deadline for _, deadline in active_rooms), default=None)
+            nearest_deadline = min((deadline for _, deadline, _ in active_rooms), default=None)
             wait_seconds = max(0.01, (nearest_deadline - current_time).total_seconds()) if nearest_deadline else 60.0
             try:
                 await asyncio.wait_for(manager.clock_changed.wait(), timeout=wait_seconds)
@@ -405,6 +441,15 @@ def admin_rooms(_: None = Depends(admin)) -> list[dict]:
     return [room.snapshot() for room in sorted(manager.rooms.values(), key=lambda item: item.id)]
 
 
+@app.delete("/api/admin/rooms")
+async def delete_all_rooms(_: None = Depends(admin)) -> dict:
+    room_ids = list(manager.rooms)
+    for room_id in room_ids:
+        room = await manager.delete_room(room_id)
+        await disconnect_deleted_room(room.id)
+    return {"ok": True, "deleted": len(room_ids)}
+
+
 @app.put("/api/admin/rooms/{room_id}")
 async def update_room(room_id: str, update: RoomUpdate, _: None = Depends(admin)) -> dict:
     room = await manager.update_room(room_id, update.game_name, update.max_players)
@@ -416,13 +461,7 @@ async def update_room(room_id: str, update: RoomUpdate, _: None = Depends(admin)
 @app.delete("/api/admin/rooms/{room_id}")
 async def delete_room(room_id: str, _: None = Depends(admin)) -> dict:
     room = await manager.delete_room(room_id)
-    await broadcast(room.id, "room_deleted", {"room_id": room.id})
-    for websocket in connections.pop(room.id, set()):
-        try: await websocket.close(code=1000)
-        except Exception: pass
-        websocket_send_locks.pop(websocket, None)
-        websocket_priority_waiters.pop(websocket, None)
-    clear_room_reactions(room.id)
+    await disconnect_deleted_room(room.id)
     return {"ok": True}
 
 
@@ -535,7 +574,7 @@ async def next_question(room_id: str, _: None = Depends(admin)) -> dict:
 
 @app.post("/api/admin/rooms/{room_id}/lock")
 async def lock(room_id: str, _: None = Depends(admin)) -> dict:
-    room = await manager.ensure_room(room_id); result = await manager.lock_and_score(room); await broadcast(room.id, "game_state", room.snapshot()); await broadcast(room.id, "result", result); return result
+    room = await manager.ensure_room(room_id); room = await manager.begin_result_reveal(room); snapshot = room.snapshot(); await broadcast(room.id, "game_state", snapshot); return snapshot
 
 
 @app.post("/api/admin/rooms/{room_id}/pause")
@@ -613,8 +652,15 @@ async def websocket(ws: WebSocket, room_id: str) -> None:
         await ws.close(code=1008)
         return
     try:
-        while True:
+        # A concurrent broadcast can discover a closed transport before the
+        # receive side sees its disconnect event. Starlette marks the application
+        # disconnected on send failure; receive_json would then raise RuntimeError.
+        while ws.application_state == WebSocketState.CONNECTED:
             message = await ws.receive_json()
+            # Firestore CAS can replace the in-memory Room instance while this
+            # WebSocket remains open. Always make authorization and phase
+            # decisions against the latest accepted room state.
+            room = await manager.ensure_room(room.id)
             if message.get("type") == "time_sync":
                 client_sent_at = (message.get("payload") or {}).get("client_sent_at")
                 client_monotonic = (message.get("payload") or {}).get("client_monotonic")
@@ -630,7 +676,7 @@ async def websocket(ws: WebSocket, room_id: str) -> None:
                     if parent_was_answering and message.get("type") == "answer":
                         await broadcast(room.id, "game_state", changed.snapshot())
                     else:
-                        await broadcast(room.id, "answer_count", {"answered": len(changed.draft_answers), "total": len(changed.players)})
+                        await broadcast(room.id, "answer_count", {"answered": len(changed.answers), "total": len(changed.players)})
                 except HTTPException as exc: await send_message(ws, "error", {"code": str(exc.detail), "message": str(exc.detail)})
                 except ValidationError: await send_message(ws, "error", {"code": "INVALID_ANSWER", "message": "INVALID_ANSWER"})
             if message.get("type") == "select_question":

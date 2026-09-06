@@ -1,0 +1,102 @@
+{
+  "passed": true,
+  "failure": null,
+  "url": "http://localhost:8002",
+  "players": 12,
+  "games_completed": 1,
+  "elapsed_seconds": 282.73,
+  "last_room": "Z24T",
+  "started_at": "2026-09-06T00:31:16.447036+00:00",
+  "server_logs": {
+    "checked": true,
+    "error_lines": []
+  },
+  "metrics": {
+    "answer_ack": {
+      "count": 144,
+      "p50_ms": 93.47,
+      "p95_ms": 208.98,
+      "p99_ms": 231.3,
+      "max_ms": 252.7
+    },
+    "phase_arrival_spread": {
+      "count": 101,
+      "p50_ms": 0.69,
+      "p95_ms": 4.5,
+      "p99_ms": 21.34,
+      "max_ms": 137.87
+    },
+    "reconnect": {
+      "count": 6,
+      "p50_ms": 46.85,
+      "p95_ms": 78.11,
+      "p99_ms": 78.11,
+      "max_ms": 78.11
+    },
+    "burst_send_span": {
+      "count": 12,
+      "p50_ms": 0.9,
+      "p95_ms": 6.42,
+      "p99_ms": 6.42,
+      "max_ms": 6.42
+    }
+  },
+  "gates": {
+    "ack_p95": true,
+    "ack_p99": true,
+    "spread_p95": true,
+    "burst_within_100ms": true,
+    "reconnect": true
+  },
+  "errors": [],
+  "last_states": {
+    "458b2724-6b0e-4b44-99ca-ce686cac84d3": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "9e3cd057-96a9-446d-bbea-4ef5caeba486": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "819fe987-eccf-44da-bbb5-6c4bf93115e9": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "41b66f1b-845d-4e8f-a36d-3d502ddf7670": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "a6a852c9-c278-4480-b5d5-07684637e761": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "1f335953-54ed-429e-be10-ebd70ed5794c": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "91785540-f329-48b9-b85a-dd6c1a7015d6": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "6bcd5098-e03b-481a-bd12-2b399dc1a251": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "4cf42a51-05e0-47ce-9313-46e738249cf6": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "2b656972-fe0b-452f-a143-89aec3d1f59c": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "43165e19-562f-45aa-9f01-9c920905c56b": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "b3b238b1-c537-4915-b613-8af23e3bf8fb": {
+      "status": "FINISHED",
+      "turn": 12
+    }
+  }
+}

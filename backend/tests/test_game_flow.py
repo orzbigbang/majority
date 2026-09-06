@@ -1,8 +1,20 @@
 import asyncio
 from datetime import timedelta
+from unittest.mock import patch
 
 from app.game import GameManager
-from app.models import GameSettings, GameStatus, Question
+from app.models import GameSettings, GameStatus, IntroKind, Question
+
+
+async def advance_intro(manager: GameManager, room, kind: IntroKind) -> None:
+    assert room.status == GameStatus.TURN_INTRO
+    assert room.intro_kind == kind
+    await manager.advance_intro(room)
+    if kind == IntroKind.ROUND_START:
+        assert room.status == GameStatus.TURN_INTRO
+        assert room.intro_kind == IntroKind.PARENT_SELECT
+        assert room.snapshot()["clock"]["duration_ms"] == 1800
+        await manager.advance_intro(room)
 
 
 def test_one_round_gives_every_player_one_parent_turn() -> None:
@@ -41,9 +53,13 @@ def test_one_round_gives_every_player_one_parent_turn() -> None:
         assert room.status == GameStatus.COUNTDOWN
         assert room.clock_version == 3
 
-        await manager.begin_selection(room)
+        await manager.begin_round_intro(room)
+        assert room.status == GameStatus.TURN_INTRO
+        assert room.intro_kind == IntroKind.ROUND_START
+        assert room.snapshot()["current_round"] == 1
+        assert room.snapshot()["clock"]["duration_ms"] == 2400
+        await advance_intro(manager, room, IntroKind.ROUND_START)
         assert room.status == GameStatus.SELECTING
-        assert room.clock_version == 4
         assert room.snapshot()["question_count"] == 2
         assert room.snapshot()["current_parent_id"] == "alice"
         try:
@@ -52,8 +68,11 @@ def test_one_round_gives_every_player_one_parent_turn() -> None:
         except Exception as error:
             assert getattr(error, "detail", None) == "PARENT_ONLY"
         await manager.choose_question(room.id, "alice", "only")
+        assert room.status == GameStatus.TURN_INTRO
+        assert room.intro_kind == IntroKind.PARENT_ANSWER
+        assert room.snapshot()["question"]["id"] == "only"
+        await advance_intro(manager, room, IntroKind.PARENT_ANSWER)
         assert room.status == GameStatus.PARENT_ANSWERING
-        assert room.clock_version == 5
         assert room.snapshot()["question"]["id"] == "only"
         assert room.snapshot()["clock"]["phase"] == GameStatus.PARENT_ANSWERING
         assert room.snapshot()["clock"]["duration_ms"] == 20_000
@@ -65,17 +84,22 @@ def test_one_round_gives_every_player_one_parent_turn() -> None:
             assert getattr(error, "detail", None) == "PARENT_ANSWERS_FIRST"
         await manager.select_answer(room.id, "alice", "only", "B")
         await manager.answer(room.id, "alice", "only", "B")
+        assert room.status == GameStatus.TURN_INTRO
+        assert room.intro_kind == IntroKind.PLAYERS_ANSWER
+        await advance_intro(manager, room, IntroKind.PLAYERS_ANSWER)
         assert room.status == GameStatus.QUESTION
-        assert room.clock_version == 6
         try:
             await manager.answer(room.id, "alice", "only", "A")
             assert False, "The parent's answer must be locked before other players answer"
         except Exception as error:
             assert getattr(error, "detail", None) == "PARENT_ANSWER_LOCKED"
         await manager.answer(room.id, "bob", "only", "A")
+        assert room.status == GameStatus.QUESTION
+        await manager.begin_result_reveal(room)
+        assert room.status == GameStatus.TURN_INTRO
+        assert room.intro_kind == IntroKind.RESULT_REVEAL
         result = await manager.lock_and_score(room)
         assert room.status == GameStatus.SHOW_RESULT
-        assert room.clock_version == 7
         assert result["counts"] == {"A": 1, "B": 1}
         assert result["parent_id"] == "alice"
         assert result["majority_choice"] == "B"
@@ -90,18 +114,22 @@ def test_one_round_gives_every_player_one_parent_turn() -> None:
         assert room.snapshot()["result"] == result
 
         await manager.next(room.id)
-        assert room.status == GameStatus.SELECTING
-        assert room.clock_version == 8
+        assert room.status == GameStatus.TURN_INTRO
+        assert room.intro_kind == IntroKind.PARENT_SELECT
         assert room.snapshot()["current_parent_id"] == "bob"
+        await advance_intro(manager, room, IntroKind.PARENT_SELECT)
         await manager.choose_question(room.id, "bob", "only")
+        await advance_intro(manager, room, IntroKind.PARENT_ANSWER)
         await manager.answer(room.id, "bob", "only", "A")
+        await advance_intro(manager, room, IntroKind.PLAYERS_ANSWER)
         await manager.answer(room.id, "alice", "only", "A")
+        assert room.status == GameStatus.QUESTION
+        await manager.begin_result_reveal(room)
         second_result = await manager.lock_and_score(room)
         assert second_result["parent_id"] == "bob"
         assert second_result["majority_choice"] == "A"
         await manager.next(room.id)
         assert room.status == GameStatus.FINISHED
-        assert room.clock_version == 12
         assert room.snapshot()["review"] == room.history
         assert [turn["parent_id"] for turn in room.history] == ["alice", "bob"]
 
@@ -127,7 +155,9 @@ def test_leaving_removes_the_player_and_their_current_answers() -> None:
         await manager.join(room.id, "Bob", None, "bob")
         await manager.mark_ready(room.id, "bob")
         await manager.start(room.id, "alice")
+        await advance_intro(manager, room, IntroKind.ROUND_START)
         await manager.choose_question(room.id, "alice", "only")
+        await advance_intro(manager, room, IntroKind.PARENT_ANSWER)
         await manager.answer(room.id, "alice", "only", "A")
 
         await manager.leave(room.id, "alice")
@@ -151,7 +181,9 @@ def test_running_player_can_disconnect_and_rejoin_without_losing_game_state() ->
         await manager.join(room.id, "Bob", None, "bob")
         await manager.mark_ready(room.id, "bob")
         await manager.start(room.id, "alice")
+        await advance_intro(manager, room, IntroKind.ROUND_START)
         await manager.choose_question(room.id, "alice", "only")
+        await advance_intro(manager, room, IntroKind.PARENT_ANSWER)
         await manager.answer(room.id, "alice", "only", "A")
 
         await manager.set_connected(room.id, "alice", False)
@@ -242,7 +274,8 @@ def test_only_owner_can_start_after_every_other_player_is_ready() -> None:
             assert getattr(error, "detail", None) == "OWNER_ONLY"
 
         await manager.start(room.id, "owner")
-        assert room.status == GameStatus.SELECTING
+        assert room.status == GameStatus.TURN_INTRO
+        assert room.intro_kind == IntroKind.ROUND_START
         assert room.current_parent_id == "owner"
         await manager.end(room.id)
 
@@ -308,6 +341,7 @@ def test_selection_offers_three_unused_questions_and_auto_selects_on_timeout() -
         await manager.join(room.id, "Player", None, "player")
         await manager.mark_ready(room.id, "player")
         await manager.start(room.id, "owner")
+        await advance_intro(manager, room, IntroKind.ROUND_START)
 
         first_options = room.snapshot()["question_options"]
         assert len(first_options) == 3
@@ -319,12 +353,15 @@ def test_selection_offers_three_unused_questions_and_auto_selects_on_timeout() -
         assert room.used_question_ids == [first_question_id]
         room.status = GameStatus.SHOW_RESULT
         await manager.next(room.id)
+        await advance_intro(manager, room, IntroKind.PARENT_SELECT)
         assert first_question_id not in {item["id"] for item in room.snapshot()["question_options"]}
 
         timed_options = {item["id"] for item in room.snapshot()["question_options"]}
         room.selection_started_at = now() - timedelta(seconds=16)
         await manager.auto_choose_question(room)
-        assert room.status == GameStatus.PARENT_ANSWERING
+        assert room.status == GameStatus.TURN_INTRO
+        assert room.intro_kind == IntroKind.PARENT_ANSWER
+        assert room.intro_automatic is True
         assert room.selected_question is not None
         assert room.selected_question.id in timed_options
         assert room.selected_question.id != first_question_id
@@ -333,6 +370,8 @@ def test_selection_offers_three_unused_questions_and_auto_selects_on_timeout() -
         for _ in range(2):
             room.status = GameStatus.SHOW_RESULT
             await manager.next(room.id)
+            assert room.intro_kind in {IntroKind.PARENT_SELECT, IntroKind.ROUND_START}
+            await advance_intro(manager, room, room.intro_kind)
             next_options = {item["id"] for item in room.snapshot()["question_options"]}
             assert next_options.isdisjoint(selected_ids)
             next_question_id = next(iter(next_options))
@@ -342,6 +381,7 @@ def test_selection_offers_three_unused_questions_and_auto_selects_on_timeout() -
 
         room.status = GameStatus.SHOW_RESULT
         await manager.next(room.id)
+        await advance_intro(manager, room, IntroKind.ROUND_START)
         assert len(room.snapshot()["question_options"]) == 3
         assert room.used_question_ids == []
 
@@ -360,15 +400,19 @@ def test_parent_answer_timeout_uses_draft_then_starts_shared_question_clock() ->
         await manager.join(room.id, "Player", None, "player")
         await manager.mark_ready(room.id, "player")
         await manager.start(room.id, "owner")
+        await advance_intro(manager, room, IntroKind.ROUND_START)
         await manager.choose_question(room.id, "owner", "only")
+        await advance_intro(manager, room, IntroKind.PARENT_ANSWER)
         await manager.select_answer(room.id, "owner", "only", "B")
 
         room.parent_answer_started_at = now() - timedelta(seconds=21)
         await manager.auto_answer_parent(room)
 
-        assert room.status == GameStatus.QUESTION
+        assert room.status == GameStatus.TURN_INTRO
+        assert room.intro_kind == IntroKind.PLAYERS_ANSWER
         assert room.answers["owner"].choice == "B"
         assert room.parent_answer_started_at is None
+        await advance_intro(manager, room, IntroKind.PLAYERS_ANSWER)
         assert room.snapshot()["clock"]["phase"] == GameStatus.QUESTION
         assert room.snapshot()["clock"]["duration_ms"] == 20_000
 
@@ -389,6 +433,7 @@ def test_disconnected_parent_turn_is_deferred_and_restored_after_reconnect() -> 
         await manager.mark_ready(room.id, "player-1")
         await manager.mark_ready(room.id, "player-2")
         await manager.start(room.id, "owner")
+        await advance_intro(manager, room, IntroKind.ROUND_START)
 
         await manager.set_connected(room.id, "owner", False)
         room.parent_disconnected_at = now() - timedelta(seconds=9)
@@ -403,6 +448,8 @@ def test_disconnected_parent_turn_is_deferred_and_restored_after_reconnect() -> 
         room.status = GameStatus.SHOW_RESULT
         await manager.next(room.id)
         assert room.current_parent_id == "owner"
+        assert room.status == GameStatus.TURN_INTRO
+        await advance_intro(manager, room, IntroKind.PARENT_SELECT)
         assert room.status == GameStatus.SELECTING
         assert room.selection_started_at is not None
 
@@ -428,5 +475,130 @@ def test_player_can_toggle_and_explicitly_set_ready_state() -> None:
         assert room.players["player"].ready is True
         await manager.mark_ready(room.id, "player", False)
         assert room.players["player"].ready is False
+
+    asyncio.run(run())
+
+
+def test_draft_choice_does_not_count_as_a_confirmed_answer() -> None:
+    async def run() -> None:
+        manager = GameManager()
+        manager.questions = [Question(id="only", title="A or B?", option_a="A", option_b="B")]
+        manager.settings = GameSettings(countdown_duration=0)
+        room = manager.create_room()
+        await manager.join(room.id, "Owner", None, "owner")
+        await manager.join(room.id, "Player", None, "player")
+        await manager.mark_ready(room.id, "player")
+        await manager.start(room.id, "owner")
+        await advance_intro(manager, room, IntroKind.ROUND_START)
+        await manager.choose_question(room.id, "owner", "only")
+        await advance_intro(manager, room, IntroKind.PARENT_ANSWER)
+        await manager.answer(room.id, "owner", "only", "A")
+        await advance_intro(manager, room, IntroKind.PLAYERS_ANSWER)
+
+        await manager.select_answer(room.id, "player", "only", "B")
+        assert room.snapshot()["answered"] == 1
+        assert "player" not in room.answers
+
+        await manager.answer(room.id, "player", "only", "B")
+        assert room.snapshot()["answered"] == 2
+
+    asyncio.run(run())
+
+
+def test_scoring_prefers_confirmed_then_draft_then_random_answer() -> None:
+    async def run() -> None:
+        manager = GameManager()
+        manager.questions = [Question(id="only", title="A or B?", option_a="A", option_b="B")]
+        manager.settings = GameSettings(countdown_duration=0)
+        room = manager.create_room()
+        await manager.join(room.id, "Owner", None, "owner")
+        await manager.join(room.id, "Confirmed", None, "confirmed")
+        await manager.join(room.id, "Draft", None, "draft")
+        await manager.join(room.id, "Untouched", None, "untouched")
+        for player_id in ("confirmed", "draft", "untouched"):
+            await manager.mark_ready(room.id, player_id)
+        await manager.start(room.id, "owner")
+        await advance_intro(manager, room, IntroKind.ROUND_START)
+        await manager.choose_question(room.id, "owner", "only")
+        await advance_intro(manager, room, IntroKind.PARENT_ANSWER)
+        await manager.answer(room.id, "owner", "only", "A")
+        await advance_intro(manager, room, IntroKind.PLAYERS_ANSWER)
+
+        await manager.answer(room.id, "confirmed", "only", "A")
+        await manager.select_answer(room.id, "confirmed", "only", "B")
+        await manager.select_answer(room.id, "draft", "only", "B")
+        await manager.begin_result_reveal(room)
+
+        with patch("app.game.secrets.choice", return_value="A") as random_choice:
+            result = await manager.lock_and_score(room)
+
+        choices = {answer["player_id"]: answer["choice"] for answer in result["answers"]}
+        assert choices == {"owner": "A", "confirmed": "A", "draft": "B", "untouched": "A"}
+        assert result["counts"] == {"A": 3, "B": 1}
+        assert room.answers["confirmed"].choice == "A"
+        assert room.answers["untouched"].answered_at == room.question_started_at + timedelta(seconds=room.settings.question_duration)
+        random_choice.assert_called_once_with(("A", "B"))
+
+    asyncio.run(run())
+
+
+def test_parent_answer_clock_freezes_offline_and_resumes_with_remaining_time() -> None:
+    async def run() -> None:
+        from app.models import now
+
+        manager = GameManager()
+        manager.questions = [Question(id="only", title="A or B?", option_a="A", option_b="B")]
+        manager.settings = GameSettings(countdown_duration=0, question_duration=20)
+        room = manager.create_room()
+        await manager.join(room.id, "Owner", None, "owner")
+        await manager.join(room.id, "Player", None, "player")
+        await manager.mark_ready(room.id, "player")
+        await manager.start(room.id, "owner")
+        await advance_intro(manager, room, IntroKind.ROUND_START)
+        await manager.choose_question(room.id, "owner", "only")
+        await advance_intro(manager, room, IntroKind.PARENT_ANSWER)
+        room.parent_answer_started_at = now() - timedelta(seconds=5)
+
+        await manager.set_connected(room.id, "player", False)
+        await manager.set_connected(room.id, "owner", False)
+        frozen = room.parent_phase_remaining_seconds
+        assert frozen is not None and 14 <= frozen <= 16
+        assert room.parent_answer_started_at is None
+        assert room.snapshot()["clock"]["running"] is False
+
+        room.parent_disconnected_at = now() - timedelta(seconds=9)
+        await manager.defer_disconnected_parent(room)
+        assert room.current_parent_id == "owner"
+        assert room.parent_phase_remaining_seconds == frozen
+
+        await manager.set_connected(room.id, "owner", True)
+        assert room.parent_answer_started_at is not None
+        assert room.parent_phase_remaining_seconds is None
+        assert room.snapshot()["clock"]["running"] is True
+        assert 13_000 <= room.snapshot()["clock"]["remaining_ms"] <= 16_000
+
+    asyncio.run(run())
+
+
+def test_all_timed_turn_phases_can_pause_and_resume() -> None:
+    async def run() -> None:
+        manager = GameManager()
+        manager.settings = GameSettings(countdown_duration=0)
+        room = manager.create_room()
+        await manager.join(room.id, "Owner", None, "owner")
+        await manager.join(room.id, "Player", None, "player")
+        await manager.mark_ready(room.id, "player")
+        await manager.start(room.id, "owner")
+
+        await manager.pause(room.id)
+        assert room.paused_status == GameStatus.TURN_INTRO
+        await manager.resume(room.id)
+        assert room.status == GameStatus.TURN_INTRO
+
+        await advance_intro(manager, room, IntroKind.ROUND_START)
+        await manager.pause(room.id)
+        assert room.paused_status == GameStatus.SELECTING
+        await manager.resume(room.id)
+        assert room.status == GameStatus.SELECTING
 
     asyncio.run(run())

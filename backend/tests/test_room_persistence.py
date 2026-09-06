@@ -1,6 +1,9 @@
 import asyncio
 from copy import deepcopy
 from threading import Event
+from unittest.mock import patch
+
+import pytest
 
 from app.game import GameManager
 from app.models import GameSettings, GameStatus, Question, RoomState
@@ -107,7 +110,10 @@ def test_running_room_is_restored_after_process_restart() -> None:
         await first.join(room.id, "Player", None, "player")
         await first.mark_ready(room.id, "player")
         await first.start(room.id, "owner")
+        await first.advance_intro(room)
+        await first.advance_intro(room)
         await first.choose_question(room.id, "owner", "only")
+        await first.advance_intro(room)
         version_before_answer = repository.get_room(room.id).version
         await first.answer(room.id, "owner", "only", "A")
         assert repository.get_room(room.id).version == version_before_answer + 1
@@ -115,11 +121,12 @@ def test_running_room_is_restored_after_process_restart() -> None:
         restarted = configured_manager(repository)
         restored = restarted.room(room.id)
 
-        assert restored.status == GameStatus.QUESTION
+        assert restored.status == GameStatus.TURN_INTRO
+        assert restored.intro_kind == "PLAYERS_ANSWER"
         assert restored.owner_id == "owner"
         assert list(restored.players) == ["owner", "player"]
         assert restored.answers["owner"].choice == "A"
-        assert restored.question_started_at is not None
+        assert restored.intro_started_at is not None
         assert restored.game_run_id is not None
         assert restored.clock_version == room.clock_version
         assert restored.snapshot()["clock"]["revision"] == room.clock_version
@@ -167,7 +174,10 @@ def test_room_save_does_not_block_the_async_event_loop() -> None:
         await manager.join(room.id, "Player", None, "player")
         await manager.mark_ready(room.id, "player")
         await manager.start(room.id, "owner")
+        await manager.advance_intro(room)
+        await manager.advance_intro(room)
         await manager.choose_question(room.id, "owner", "only")
+        await manager.advance_intro(room)
 
         repository.block_next_save = True
         answer_task = asyncio.create_task(manager.answer(room.id, "owner", "only", "A"))
@@ -180,5 +190,75 @@ def test_room_save_does_not_block_the_async_event_loop() -> None:
         assert not answer_task.done()
         repository.release_save.set()
         await answer_task
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("command", ["start", "answer", "score"])
+def test_failed_save_restores_game_state_and_allows_retry(command: str) -> None:
+    async def run() -> None:
+        repository = MemoryRoomRepository()
+        manager = configured_manager(repository)
+        room = manager.create_room()
+        owner = await manager.join(room.id, "Owner", None, "owner")
+        session_id = owner.session_id
+        await manager.join(room.id, "Player", None, "player")
+        await manager.mark_ready(room.id, "player", True)
+        if command != "start":
+            await manager.start(room.id, "owner")
+            await manager.advance_intro(room)
+            await manager.advance_intro(room)
+            await manager.choose_question(room.id, "owner", "only")
+            await manager.advance_intro(room)
+        if command == "score":
+            await manager.answer(room.id, "owner", "only", "A")
+            await manager.advance_intro(room)
+            await manager.answer(room.id, "player", "only", "B")
+            await manager.begin_result_reveal(room)
+
+        async def execute():
+            if command == "start":
+                return await manager.start(room.id, "owner")
+            if command == "answer":
+                return await manager.answer(room.id, "owner", "only", "A")
+            return await manager.lock_and_score(room)
+
+        before = room.to_state()
+        manager.clock_changed.clear()
+        with patch.object(repository, "save_room", side_effect=OSError("storage unavailable")):
+            with pytest.raises(OSError):
+                await execute()
+        assert room.to_state() == before
+        assert repository.get_room(room.id) == before
+        assert room.players["owner"].session_id == session_id
+        assert not manager.clock_changed.is_set()
+        await execute()
+        assert repository.get_room(room.id) == room.to_state()
+        assert manager.clock_changed.is_set()
+        if command == "score":
+            assert len(room.history) == 1
+
+    asyncio.run(run())
+
+
+def test_failed_save_preserves_a_newer_watch_state() -> None:
+    async def run() -> None:
+        repository = MemoryRoomRepository()
+        manager = configured_manager(repository)
+        room = manager.create_room()
+        await manager.join(room.id, "Owner", None, "owner")
+        await manager.join(room.id, "Player", None, "player")
+        await manager.mark_ready(room.id, "player", True)
+        remote = room.to_state().model_copy(update={"version": room.version + 2, "title": "Remote update"})
+        loop = asyncio.get_running_loop()
+
+        def fail_with_watch(*args):
+            loop.call_soon_threadsafe(manager.accept_remote_state, room.id, remote)
+            raise OSError("save failed after watch update")
+
+        with patch.object(repository, "save_room", side_effect=fail_with_watch):
+            with pytest.raises(OSError):
+                await manager.start(room.id, "owner")
+        assert room.to_state() == remote
 
     asyncio.run(run())

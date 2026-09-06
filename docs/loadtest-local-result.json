@@ -1,0 +1,104 @@
+{
+  "passed": false,
+  "failure": "Server log audit: unhandled WebSocket disconnect exceptions",
+  "url": "http://localhost:8002",
+  "players": 12,
+  "games_completed": 1,
+  "elapsed_seconds": 282.55,
+  "last_room": "2AE4",
+  "metrics": {
+    "answer_ack": {
+      "count": 144,
+      "p50_ms": 87.88,
+      "p95_ms": 193.15,
+      "p99_ms": 217.16,
+      "max_ms": 225.53
+    },
+    "phase_arrival_spread": {
+      "count": 101,
+      "p50_ms": 0.51,
+      "p95_ms": 3.68,
+      "p99_ms": 21.03,
+      "max_ms": 124.38
+    },
+    "reconnect": {
+      "count": 6,
+      "p50_ms": 39.86,
+      "p95_ms": 49.94,
+      "p99_ms": 49.94,
+      "max_ms": 49.94
+    }
+  },
+  "gates": {
+    "ack_p95": true,
+    "ack_p99": true,
+    "spread_p95": true,
+    "reconnect": true
+  },
+  "errors": [],
+  "last_states": {
+    "7f671c19-e5cd-4cdb-8855-731ba9866ede": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "ceb57006-1ff5-4055-835e-ae5e0888882c": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "b5379960-45ba-4592-b897-730bd733d602": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "96bc4160-0cd5-4f00-8ecb-aaff3d7ec19b": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "80d9346e-7a0d-4c14-83bf-bddceaac2bb0": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "06da05a3-c1f2-4af1-a5a9-a119de8c5131": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "5cfb0fbf-10bb-4e6d-b7b1-9da744d7d603": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "0ccfa4fd-fa45-45b7-9fda-08dd5609b93a": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "821d3956-06d6-4618-98d2-81e80f738628": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "6113421b-badb-4b5b-82ae-6c4046ccd0c7": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "9879fdb9-f6b9-4998-8149-ff000e0d1a78": {
+      "status": "FINISHED",
+      "turn": 12
+    },
+    "b70a3b69-8c03-4edc-9ea6-21b8c5ace8af": {
+      "status": "FINISHED",
+      "turn": 12
+    }
+  },
+  "server_logs": {
+    "checked": true,
+    "error_lines": [
+      "ERROR:    Exception in ASGI application",
+      "Traceback (most recent call last):",
+      "RuntimeError: WebSocket is not connected. Need to call \"accept\" first.",
+      "ERROR:    Exception in ASGI application",
+      "Traceback (most recent call last):",
+      "RuntimeError: WebSocket is not connected. Need to call \"accept\" first.",
+      "ERROR:    Exception in ASGI application",
+      "Traceback (most recent call last):",
+      "RuntimeError: WebSocket is not connected. Need to call \"accept\" first."
+    ],
+    "scope": "Post-run audit of isolated container lifetime, one 12-player run"
+  }
+}
