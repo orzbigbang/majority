@@ -276,7 +276,7 @@ async def lifespan(_: FastAPI):
                         parent_id = changed.current_parent_id
                         parent_answer = changed.answers.get(parent_id or "")
                         if parent_id and parent_answer:
-                            await send_to_player(changed.id, parent_id, "answer_saved", {"choice": parent_answer.choice, "automatic": True})
+                            await send_to_player(changed.id, parent_id, "answer_saved", {"choice": parent_answer.choice, "automatic": True, "question_id": parent_answer.question_id, "turn_id": changed.turn_id, "request_id": None})
                         await broadcast(changed.id, "game_state", changed.snapshot())
                     elif room.status == GameStatus.QUESTION:
                         changed = await manager.begin_result_reveal(room, expected_clock=expected_clock)
@@ -684,22 +684,24 @@ async def websocket(ws: WebSocket, room_id: str) -> None:
                 if isinstance(client_sent_at, (int, float)):
                     await send_message(ws, "time_sync", {"client_sent_at": client_sent_at, "client_monotonic": client_monotonic, "server_time": now().isoformat()}, droppable=True)
             if message.get("type") in {"answer", "select_answer"}:
+                payload = None
                 try:
                     with command_timing(room.id, message["type"]):
                         payload = AnswerPayload.model_validate(message.get("payload"))
                         parent_was_answering = room.status == GameStatus.PARENT_ANSWERING
                         with span("mutation"):
-                            changed = await (manager.answer(room.id, connected_player_id, payload.question_id, payload.choice) if message.get("type") == "answer" else manager.select_answer(room.id, connected_player_id, payload.question_id, payload.choice))
+                            changed = await (manager.answer(room.id, connected_player_id, payload.question_id, payload.choice, turn_id=payload.turn_id) if message.get("type") == "answer" else manager.select_answer(room.id, connected_player_id, payload.question_id, payload.choice, turn_id=payload.turn_id))
                         if message.get("type") == "answer":
                             with span("ack_send"):
-                                if not await send_message(ws, "answer_saved", {"choice": payload.choice}):
+                                if not await send_message(ws, "answer_saved", {"choice": payload.choice, "question_id": payload.question_id, "turn_id": changed.turn_id, "request_id": payload.request_id}):
                                     count("ack_send_failures")
                         with span("broadcast"):
                             if parent_was_answering and message.get("type") == "answer":
                                 await broadcast(room.id, "game_state", changed.snapshot())
                             else:
                                 await broadcast(room.id, "answer_count", {"answered": len(changed.answers), "total": len(changed.players)})
-                except HTTPException as exc: await send_message(ws, "error", {"code": str(exc.detail), "message": str(exc.detail)})
+                except HTTPException as exc:
+                    await send_message(ws, "error", {"code": str(exc.detail), "message": str(exc.detail), "operation": message["type"], "request_id": payload.request_id if payload else None, "turn_id": payload.turn_id if payload else None, "question_id": payload.question_id if payload else None})
                 except ValidationError: await send_message(ws, "error", {"code": "INVALID_ANSWER", "message": "INVALID_ANSWER"})
             if message.get("type") == "select_question":
                 try:

@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { QRCodeSVG } from "qrcode.react";
 import { BottomSheet } from "../../BottomSheet";
@@ -38,6 +38,7 @@ type RoomSettingsDraft = { title: string; max_players: string; round_count: stri
 type IntroKind = "ROUND_START" | "PARENT_SELECT" | "PARENT_ANSWER" | "PLAYERS_ANSWER" | "RESULT_REVEAL";
 type RoomClock = { revision: number; phase: State["status"]; server_time: string; running: boolean; started_at: string | null; ends_at: string | null; duration_ms: number | null; remaining_ms: number };
 type State = {
+  turn_id: string;
   title: string | null;
   status: "WAITING" | "COUNTDOWN" | "TURN_INTRO" | "SELECTING" | "PARENT_ANSWERING" | "QUESTION" | "PAUSED" | "SHOW_RESULT" | "FINISHED";
   owner_id: string | null;
@@ -68,8 +69,20 @@ function clockMillisecondsRemaining(clock: RoomClock | undefined, currentTime: n
   return Math.max(0, new Date(clock.ends_at).getTime() - currentTime);
 }
 
-function clockSecondsRemaining(clock: RoomClock | undefined, currentTime: number): number {
-  return Math.ceil(clockMillisecondsRemaining(clock, currentTime) / 1000);
+// Only this small subtree ticks; room state, avatars and answer controls stay idle.
+function RoomTimer({ clock, offset, children }: { clock: RoomClock; offset: number; children: (remaining: number, progress: number) => ReactNode }) {
+  const [currentTime, setCurrentTime] = useState(Date.now);
+  useEffect(() => {
+    setCurrentTime(Date.now());
+    if (!clock.running) return;
+    const timer = window.setInterval(() => setCurrentTime(Date.now()), 50);
+    return () => window.clearInterval(timer);
+  }, [clock.revision, clock.running, clock.ends_at, offset]);
+  const milliseconds = clockMillisecondsRemaining(clock, currentTime + offset);
+  const seconds = Math.ceil(milliseconds / 1000);
+  const remaining = clock.phase === "COUNTDOWN" ? Math.max(0, seconds - 1) : seconds;
+  const progress = clock.duration_ms ? Math.max(0, Math.min(100, milliseconds / clock.duration_ms * 100)) : 0;
+  return <>{children(remaining, progress)}</>;
 }
 
 function avatarUrl(playerId: string): string {
@@ -209,11 +222,11 @@ export default function RoomPage({ params }: { params: Promise<{ roomId: string 
   const [savingRoomSettings, setSavingRoomSettings] = useState(false);
   const [roomSettingsDraft, setRoomSettingsDraft] = useState<RoomSettingsDraft>({ title: "", max_players: "12", round_count: "1", selection_duration: "15", question_duration: "20", between_question_duration: "5" });
   const [showPreviousGame, setShowPreviousGame] = useState(false);
-  const [currentTime, setCurrentTime] = useState(Date.now());
   const [serverClockOffsetMs, setServerClockOffsetMs] = useState(0);
   const [activeQuestionIndex, setActiveQuestionIndex] = useState(0);
   const questionDeckRef = useRef<HTMLDivElement | null>(null);
-  const selectionQuestionId = useRef<string | null>(null);
+  const answerScope = useRef<{ turn_id: string; question_id: string | null }>({ turn_id: "", question_id: null });
+  const pendingAnswer = useRef<string | null>(null);
   const clockSynchronized = useRef(false);
   const clockSyncSamples = useRef<{ rtt: number; offset: number }[]>([]);
   const latestClockRevision = useRef(-1);
@@ -240,12 +253,6 @@ export default function RoomPage({ params }: { params: Promise<{ roomId: string 
     }
   }, [roomId]);
   useEffect(() => {
-    setCurrentTime(Date.now());
-    if (!state?.clock?.running) return;
-    const timer = window.setInterval(() => setCurrentTime(Date.now()), 50);
-    return () => window.clearInterval(timer);
-  }, [state?.clock?.revision, state?.clock?.running]);
-  useEffect(() => {
     const isReactionCooldown = message === "リアクションは少し間をあけて送ってください。"
       || message === "リアクションが混み合っています。少し待ってから送ってください。";
     if (!isReactionCooldown) return;
@@ -260,12 +267,15 @@ export default function RoomPage({ params }: { params: Promise<{ roomId: string 
       else router.replace(`/?room=${roomId}`);
     } catch { router.replace(`/?room=${roomId}`); }
   }, [roomId, router]);
-  useEffect(() => {
-    const questionId = state?.question?.id || null;
-    if (selectionQuestionId.current === questionId) return;
-    selectionQuestionId.current = questionId;
-    setSelectedChoice(null); setConfirmedChoice(null); setAnswerWasAutomatic(false); setIsConfirming(false);
-  }, [state?.question?.id]);
+  function acceptAnswerScope(snapshot: State) {
+    const next = { turn_id: snapshot.turn_id, question_id: snapshot.question?.id || null };
+    if (answerScope.current.turn_id !== next.turn_id || answerScope.current.question_id !== next.question_id) {
+      pendingAnswer.current = null;
+      setSelectedChoice(null); setConfirmedChoice(null); setAnswerWasAutomatic(false); setIsConfirming(false);
+    }
+    // Update synchronously: the next socket message may arrive before React renders.
+    answerScope.current = next;
+  }
   useEffect(() => {
     if (state?.status !== "SELECTING") return;
     setActiveQuestionIndex(0);
@@ -294,6 +304,8 @@ export default function RoomPage({ params }: { params: Promise<{ roomId: string 
 
     function scheduleReconnect() {
       if (!active || reconnectTimer !== null) return;
+      pendingAnswer.current = null;
+      setIsConfirming(false);
       setWs(null);
       setMessage("接続が一時的に切れました。再接続しています…");
       const delay = Math.min(30_000, 1_000 * (2 ** Math.min(reconnectAttempt, 5)));
@@ -326,7 +338,9 @@ export default function RoomPage({ params }: { params: Promise<{ roomId: string 
         const stored = JSON.parse(localStorage.getItem(identityKey) || "{}");
         localStorage.setItem(identityKey, JSON.stringify({ ...stored, player_id: data.player_id, session_id: data.session_id }));
       } catch { /* The player ID still provides a safe recovery path. */ }
-      selectionQuestionId.current = data.room.question?.id || null;
+      acceptAnswerScope(data.room);
+      pendingAnswer.current = null;
+      setIsConfirming(false);
       setSelectedChoice(data.draft_choice || null);
       setConfirmedChoice(data.confirmed_choice || null);
       setAnswerWasAutomatic(false);
@@ -354,6 +368,7 @@ export default function RoomPage({ params }: { params: Promise<{ roomId: string 
           const incomingRevision = Number(item.payload.clock?.revision ?? -1);
           if (incomingRevision < latestClockRevision.current) return;
           latestClockRevision.current = incomingRevision;
+          acceptAnswerScope(item.payload);
           setState(item.payload);
           setResult(item.payload.result || null);
           if (item.payload.status !== "WAITING" || item.payload.owner_id !== player.player_id) setRoomSettingsOpen(false);
@@ -375,6 +390,11 @@ export default function RoomPage({ params }: { params: Promise<{ roomId: string 
         if (item.type === "room_deleted") { active = false; exitRoom("deleted", roomId); }
         if (item.type === "answer_count") setState(current => current ? { ...current, answered: item.payload.answered } : current);
         if (item.type === "answer_saved") {
+          const receipt = item.payload;
+          if (receipt.turn_id !== answerScope.current.turn_id || receipt.question_id !== answerScope.current.question_id) return;
+          if (!receipt.automatic && (!pendingAnswer.current || receipt.request_id !== pendingAnswer.current)) return;
+          if (receipt.choice !== "A" && receipt.choice !== "B") return;
+          pendingAnswer.current = null;
           // A normal confirmation may arrive after the player has clicked again.
           // Keep that newer draft while updating the separately confirmed answer.
           setSelectedChoice(current => item.payload.automatic ? item.payload.choice : current ?? item.payload.choice);
@@ -385,7 +405,20 @@ export default function RoomPage({ params }: { params: Promise<{ roomId: string 
         if (item.type === "room_settings_saved") { setSavingRoomSettings(false); setRoomSettingsOpen(false); }
         if (item.type === "result") setResult(item.payload);
         if (item.type === "emoji_reaction") reactions.receive(item.payload);
-        if (item.type === "error") { setIsConfirming(false); setSavingRoomSettings(false); setMessage(apiMessage(item.payload.message, "操作を完了できませんでした。")); }
+        if (item.type === "error") {
+          const error = item.payload;
+          if (error.operation === "answer" || error.operation === "select_answer") {
+            if (error.turn_id !== answerScope.current.turn_id || error.question_id !== answerScope.current.question_id) return;
+            if (error.operation === "answer") {
+              if (!pendingAnswer.current || error.request_id !== pendingAnswer.current) return;
+              pendingAnswer.current = null;
+              setIsConfirming(false);
+            }
+          } else {
+            setSavingRoomSettings(false);
+          }
+          setMessage(apiMessage(error.message, "操作を完了できませんでした。"));
+        }
       };
       socket.onclose = event => {
         if (!active) return;
@@ -444,7 +477,10 @@ export default function RoomPage({ params }: { params: Promise<{ roomId: string 
       if (!ws || ws.readyState !== WebSocket.OPEN) setMessage("再接続中です。少し待ってから回答を確定してください。");
       return;
     }
-    ws.send(JSON.stringify({ type: "answer", player_id: identity.player_id, payload: { question_id: state.question.id, choice: selectedChoice } }));
+    if (pendingAnswer.current) return;
+    const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    pendingAnswer.current = requestId;
+    ws.send(JSON.stringify({ type: "answer", player_id: identity.player_id, payload: { question_id: state.question.id, turn_id: state.turn_id, request_id: requestId, choice: selectedChoice } }));
     setIsConfirming(true);
   }
 
@@ -455,7 +491,7 @@ export default function RoomPage({ params }: { params: Promise<{ roomId: string 
     }
     if (state.status === "QUESTION" && state.current_parent_id === identity.player_id) return;
     setSelectedChoice(choice);
-    ws.send(JSON.stringify({ type: "select_answer", player_id: identity.player_id, payload: { question_id: state.question.id, choice } }));
+    ws.send(JSON.stringify({ type: "select_answer", player_id: identity.player_id, payload: { question_id: state.question.id, turn_id: state.turn_id, choice } }));
   }
 
   function chooseQuestion(questionId: string) {
@@ -574,11 +610,6 @@ export default function RoomPage({ params }: { params: Promise<{ roomId: string 
   const board = useMemo(() => result?.leaderboard ?? [...(state?.players || [])]
     .sort((a, b) => b.score - a.score || a.username.localeCompare(b.username))
     .map((player, index) => ({ rank: index + 1, ...player })), [result, state]);
-  const serverCurrentTime = currentTime + serverClockOffsetMs;
-  const clockRemainingMs = clockMillisecondsRemaining(state?.clock, serverCurrentTime);
-  const clockRemaining = clockSecondsRemaining(state?.clock, serverCurrentTime);
-  const remaining = state?.status === "COUNTDOWN" ? Math.max(0, clockRemaining - 1) : clockRemaining;
-  const phaseProgress = state?.clock?.duration_ms ? Math.max(0, Math.min(100, (clockRemainingMs / state.clock.duration_ms) * 100)) : 0;
   const currentParent = state?.players.find(player => player.id === state.current_parent_id);
   const isCurrentParent = Boolean(identity && state?.current_parent_id === identity.player_id);
   // Once the shared-answer phase starts, the parent's answer is committed and stays locked.
@@ -605,30 +636,30 @@ export default function RoomPage({ params }: { params: Promise<{ roomId: string 
 
   return <main id="main-content" className={`game-page${gamePageStateClass}${isParentWaitPage ? " parent-wait-page" : ""}${viewingResults ? " game-page-results" : ""}`}>
     <header className="game-header"><div className="room-header-copy"><span className="eyebrow">ルーム {roomId}</span><h1>{state.title || state.settings.game_name}</h1></div><div className="game-header-actions"><button type="button" className="secondary room-header-button room-rules-button" onClick={() => setRulesOpen(true)} aria-haspopup="dialog"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4.5h10a3 3 0 0 1 3 3V20H8a3 3 0 0 1-3-3V4.5Z" /><path d="M8 4.5V17a3 3 0 0 0 3 3M11 9h4M11 13h4" /></svg><span>ルール</span></button>{state.status === "WAITING" && !viewingResults && <button type="button" className="secondary room-header-button room-share-button" onClick={() => { setShareMessage(""); setRoomShareOpen(true); }} aria-haspopup="dialog"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="m8.6 10.5 6.8-4M8.6 13.5l6.8 4" /></svg><span>共有</span></button>}{(state.status !== "WAITING" || viewingResults) && <div className="player-score"><small>{viewingResults ? "最終スコア" : "現在のスコア"}</small><strong>{viewingResults ? (identity ? displayedBoard.find(player => player.id === identity.player_id)?.score ?? 0 : 0) : currentOwnScore}</strong></div>}</div></header>
-    <div className="visually-hidden" aria-live="polite" aria-atomic="true">ゲーム状況：{viewingResults ? "ゲーム結果を表示中" : state.status === "WAITING" ? "プレイヤーの準備待ち" : state.status === "COUNTDOWN" ? (remaining === 0 ? "スタート" : "まもなく開始") : state.status === "TURN_INTRO" ? "次のゲーム画面を案内中" : state.status === "SELECTING" ? `${currentParent?.username || "親"}が問題を選択中` : state.status === "PARENT_ANSWERING" ? `${currentParent?.username || "親"}が先に回答中` : state.status === "QUESTION" ? `第${state.current_question_index + 1}問` : state.status === "PAUSED" ? "一時停止中" : state.status === "SHOW_RESULT" ? (isLastQuestion ? "最終結果を計算中" : "この問題の結果を表示中") : "集計中"}</div>
+    <div className="visually-hidden" aria-live="polite" aria-atomic="true">ゲーム状況：{viewingResults ? "ゲーム結果を表示中" : state.status === "WAITING" ? "プレイヤーの準備待ち" : state.status === "COUNTDOWN" ? "まもなく開始" : state.status === "TURN_INTRO" ? "次のゲーム画面を案内中" : state.status === "SELECTING" ? `${currentParent?.username || "親"}が問題を選択中` : state.status === "PARENT_ANSWERING" ? `${currentParent?.username || "親"}が先に回答中` : state.status === "QUESTION" ? `第${state.current_question_index + 1}問` : state.status === "PAUSED" ? "一時停止中" : state.status === "SHOW_RESULT" ? (isLastQuestion ? "最終結果を計算中" : "この問題の結果を表示中") : "集計中"}</div>
 
     {state.status === "WAITING" && !viewingResults && <section className="card waiting-card"><div className="section-heading"><div><span className="step-label">プレイヤー待機中</span><h2>みんなの準備を待っています</h2><p className="muted">参加者全員が準備できたら開始できます。ほかの人のアバターを押すと、リアクションを送れます。</p></div><div className="ready-meter" aria-label={`${participants.length}人中${readyCount}人が準備完了`}><strong>{readyCount}</strong><span>/ {participants.length}</span></div></div><div className="ready-list">{state.players.map(player => { const isCurrentPlayer = player.id === identity?.player_id; return <article key={player.id} className={`${player.id === state.owner_id ? "room-owner" : player.ready ? "ready" : "not-ready"}${isCurrentPlayer ? " is-you" : ""}`} aria-label={isCurrentPlayer ? `${player.username}、自分のプレイヤーカード` : undefined}><ReactionAvatarButton target={{ id: player.id, username: player.username }} surfaceId="waiting" disabled={isCurrentPlayer || !player.connected} onSelect={reactions.openPicker}><img width="38" height="38" src={avatarUrl(player.id)} alt="" /></ReactionAvatarButton><span>{player.id === state.owner_id ? "★ ルームオーナー" : player.ready ? "✓ 準備完了" : "○ 準備中"}</span><strong><PlayerName name={player.username} />{isCurrentPlayer && <i className="self-marker" aria-hidden="true" />}</strong>{isOwner && player.id !== state.owner_id && <button type="button" className="secondary transfer-owner" onClick={() => setPendingOwnerId(player.id)}>オーナーにする</button>}</article>; })}</div><div className="waiting-actions">{isOwner ? <button type="button" className="waiting-primary-action" onClick={startGame} disabled={!everyoneReady}>{participants.length === 0 ? "参加者を待っています" : everyoneReady ? "ゲームを開始！" : `準備待ち（${readyCount}/${participants.length}）`}</button> : <button type="button" className="ready-toggle waiting-primary-action" aria-pressed={isReady} onClick={markReady}>{isReady ? "✓ 準備完了" : "準備"}</button>}<div className="waiting-secondary-actions">{isOwner && <button type="button" className="secondary" onClick={() => void openRoomSettings()}>ルーム設定</button>}<button type="button" className="secondary admin-button" disabled={!ws || ws.readyState !== WebSocket.OPEN} onClick={() => ws?.send(JSON.stringify({ type: "leave_room" }))}>ロビーに戻る</button></div></div>{state.previous_game && <button type="button" className="secondary previous-game-button" onClick={() => setShowPreviousGame(true)}>前回のゲーム結果を見る</button>}</section>}
 
-    {state.status === "COUNTDOWN" && <section className="card phase-card countdown-card"><p className="eyebrow">最初の親まであと少し</p><strong className={`phase-number${remaining === 0 ? " phase-start" : ""}`} role="timer" aria-label={remaining === 0 ? "スタート" : `残り${remaining}秒`}>{remaining === 0 ? "スタート！" : remaining}</strong><p>親が問題と自分の回答を決めたら、みんなの回答が始まります。</p></section>}
+    {state.status === "COUNTDOWN" && <section className="card phase-card countdown-card"><p className="eyebrow">最初の親まであと少し</p><RoomTimer clock={state.clock} offset={serverClockOffsetMs}>{(remaining, phaseProgress) => (<strong className={`phase-number${remaining === 0 ? " phase-start" : ""}`} role="timer" aria-live="polite" aria-label={remaining === 0 ? "スタート" : `残り${remaining}秒`}>{remaining === 0 ? "スタート！" : remaining}</strong>)}</RoomTimer><p>親が問題と自分の回答を決めたら、みんなの回答が始まります。</p></section>}
 
     {roundFlowPhase && <nav className="game-flow-shell" aria-label="現在のゲーム進行"><RoundFlow phase={roundFlowPhase} /></nav>}
 
-    {state.status === "TURN_INTRO" && state.intro && <TurnIntro state={state} isCurrentParent={isCurrentParent} parentName={currentParent?.username || "親"} remaining={remaining} progress={phaseProgress} />}
+    {state.status === "TURN_INTRO" && state.intro && <RoomTimer clock={state.clock} offset={serverClockOffsetMs}>{(remaining, phaseProgress) => (<TurnIntro state={state} isCurrentParent={isCurrentParent} parentName={currentParent?.username || "親"} remaining={remaining} progress={phaseProgress} />)}</RoomTimer>}
 
     {state.status === "SELECTING" && <section className={`card parent-selection-card${!isCurrentParent ? " parent-spectator-card" : ""}`} aria-labelledby="parent-selection-title">
-      <div className="question-meta"><span>ラウンド {state.current_round} / {state.round_count} · 第 {state.current_question_index + 1} ターン</span><strong className="timer" role="timer">{remaining}<small>秒</small></strong></div>
-      <div className="time-track" aria-hidden="true"><i style={{ width: `${phaseProgress}%` }} /></div>
+      <div className="question-meta"><span>ラウンド {state.current_round} / {state.round_count} · 第 {state.current_question_index + 1} ターン</span><RoomTimer clock={state.clock} offset={serverClockOffsetMs}>{(remaining, phaseProgress) => (<strong className="timer" role="timer">{remaining}<small>秒</small></strong>)}</RoomTimer></div>
+      <RoomTimer clock={state.clock} offset={serverClockOffsetMs}>{(remaining, phaseProgress) => (<div className="time-track" aria-hidden="true"><i style={{ width: `${phaseProgress}%` }} /></div>)}</RoomTimer>
       <div className="parent-selection-heading">{state.current_parent_id && <img width="64" height="64" src={avatarUrl(state.current_parent_id)} alt="" />}<div><p>{isCurrentParent ? "あなたが今回の親です" : "今回の親"}</p><h2 id="parent-selection-title">{currentParent ? <PlayerName name={currentParent.username} /> : "親を確認しています"}</h2></div></div>
       {isCurrentParent ? <div className="question-deck-shell"><div className="question-deck-intro"><p>カードを左右にめくって、意見が割れそうな一枚を選んでください。</p><strong>{activeQuestionIndex + 1}<small> / {(state.question_options || []).length}</small></strong></div><div className="question-deck" ref={questionDeckRef} onScroll={trackQuestionDeck} aria-label="問題カード"><span className="question-deck-spacer" aria-hidden="true" />{(state.question_options || []).map((question, index) => <article data-question-card key={question.id} className={`question-deck-card${index === activeQuestionIndex ? " is-active" : ""}`}><span className="deck-card-number">CARD {String(index + 1).padStart(2, "0")}</span><strong><QuestionText title={question.title} /></strong><button type="button" onClick={() => chooseQuestion(question.id)}>この問題を選ぶ</button></article>)}<span className="question-deck-spacer" aria-hidden="true" /></div><div className="question-deck-controls"><button type="button" className="deck-arrow" aria-label="前の問題" disabled={activeQuestionIndex === 0} onClick={() => moveQuestionDeck(activeQuestionIndex - 1)}>←</button><div className="deck-dots" aria-hidden="true">{(state.question_options || []).map((question, index) => <i key={question.id} className={index === activeQuestionIndex ? "active" : ""} />)}</div><button type="button" className="deck-arrow" aria-label="次の問題" disabled={activeQuestionIndex >= (state.question_options || []).length - 1} onClick={() => moveQuestionDeck(activeQuestionIndex + 1)}>→</button></div></div> : <ParentGameWait phase="selecting" parentName={currentParent?.username || "親"} />}
     </section>}
 
-    {state.status === "PARENT_ANSWERING" && !isCurrentParent && <section className="card parent-selection-card parent-spectator-card parent-answer-wait" aria-labelledby="parent-answer-wait-title"><div className="question-meta"><span className="step-label">親の回答待ち</span><strong className="timer" role="timer" aria-label={`親の回答まで残り${remaining}秒`}>{remaining}<small>秒</small></strong></div><div className="time-track" aria-hidden="true"><i style={{ width: `${phaseProgress}%` }} /></div><h2 id="parent-answer-wait-title" className="visually-hidden">問題決定後、親の回答を待っています</h2><ParentGameWait phase="answering" parentName={currentParent?.username || "親"} /></section>}
+    {state.status === "PARENT_ANSWERING" && !isCurrentParent && <section className="card parent-selection-card parent-spectator-card parent-answer-wait" aria-labelledby="parent-answer-wait-title"><div className="question-meta"><span className="step-label">親の回答待ち</span><RoomTimer clock={state.clock} offset={serverClockOffsetMs}>{(remaining, phaseProgress) => (<strong className="timer" role="timer" aria-label={`親の回答まで残り${remaining}秒`}>{remaining}<small>秒</small></strong>)}</RoomTimer></div><RoomTimer clock={state.clock} offset={serverClockOffsetMs}>{(remaining, phaseProgress) => (<div className="time-track" aria-hidden="true"><i style={{ width: `${phaseProgress}%` }} /></div>)}</RoomTimer><h2 id="parent-answer-wait-title" className="visually-hidden">問題決定後、親の回答を待っています</h2><ParentGameWait phase="answering" parentName={currentParent?.username || "親"} /></section>}
 
     {state.status === "PAUSED" && <section className="card phase-card paused-card"><p className="eyebrow">管理者が一時停止しました</p><strong className="phase-number" aria-hidden="true">Ⅱ</strong><p>そのままお待ちください。まもなく再開します。</p></section>}
 
     {((state.status === "QUESTION") || (state.status === "PARENT_ANSWERING" && isCurrentParent)) && state.question && <section className={`card question-card${state.status === "PARENT_ANSWERING" ? " parent-first-answer" : ""}`} aria-labelledby="question-title">
-      <div className="question-meta"><span>ラウンド {state.current_round} / {state.round_count} · {state.status === "PARENT_ANSWERING" ? "あなたが先に回答" : `親：${currentParent?.username || "—"}`}</span><strong className="timer" role="timer" aria-label={`残り${remaining}秒`}>{remaining}<small>秒</small></strong></div>
-      <div className="time-track" aria-hidden="true"><i style={{ width: `${phaseProgress}%` }} /></div>
+      <div className="question-meta"><span>ラウンド {state.current_round} / {state.round_count} · {state.status === "PARENT_ANSWERING" ? "あなたが先に回答" : `親：${currentParent?.username || "—"}`}</span><RoomTimer clock={state.clock} offset={serverClockOffsetMs}>{(remaining, phaseProgress) => (<strong className="timer" role="timer" aria-label={`残り${remaining}秒`}>{remaining}<small>秒</small></strong>)}</RoomTimer></div>
+      <RoomTimer clock={state.clock} offset={serverClockOffsetMs}>{(remaining, phaseProgress) => (<div className="time-track" aria-hidden="true"><i style={{ width: `${phaseProgress}%` }} /></div>)}</RoomTimer>
       {parentAnswerLocked && <div className="parent-answer-locked-status" role="status" aria-live="polite" aria-atomic="true">
         <span className="parent-answer-locked-mark" aria-hidden="true">✓</span>
         <div><small>あなたの回答は確定済み</small><strong>みんなが回答しています</strong><p>{state.answered} / {state.players.length} 人が回答済み · あなたの答えは結果発表まで秘密です</p></div>
@@ -642,7 +673,7 @@ export default function RoomPage({ params }: { params: Promise<{ roomId: string 
     </section>}
 
     {state.status === "SHOW_RESULT" && <section className="card result-card stage-card">
-      <div className="row"><div><span className="step-label">{isLastQuestion ? "最終問題" : `第 ${state.current_question_index + 1} 問`}</span><h2>{isLastQuestion ? "最終結果を計算しています" : "この問題の結果"}</h2></div><strong className="timer" role="timer">{isLastQuestion ? `集計完了まであと ${remaining} 秒` : `次の問題まであと ${remaining} 秒`}</strong></div>
+      <div className="row"><div><span className="step-label">{isLastQuestion ? "最終問題" : `第 ${state.current_question_index + 1} 問`}</span><h2>{isLastQuestion ? "最終結果を計算しています" : "この問題の結果"}</h2></div><RoomTimer clock={state.clock} offset={serverClockOffsetMs}>{(remaining, phaseProgress) => (<strong className="timer" role="timer">{isLastQuestion ? `集計完了まであと ${remaining} 秒` : `次の問題まであと ${remaining} 秒`}</strong>)}</RoomTimer></div>
       {result ? <><p className="parent-result-note"><strong>親：{currentParent?.username || "—"}</strong><span>多数派：{result.majority_choice ? choiceLabels[result.majority_choice] : "なし"}</span></p><ScoreChangeBurst score={ownScore} resultKey={result.question_id} /><div className="result-reaction-heading"><h3 className="result-answer-heading">みんなの選択</h3><span>アバターを押してリアクション</span></div><div className="result-choice-groups">{(["A", "B"] as const).map(choice => { const answers = result.answers.filter(answer => answer.choice === choice); return <section key={choice} className={`result-choice-group choice-group-${choice}`} aria-labelledby={`choice-${choice}-heading`}><div className="result-choice-group-heading"><span className="choice-letter" aria-hidden="true">{choice === "A" ? "●" : "—"}</span><div><h4 id={`choice-${choice}-heading`}>{choiceLabels[choice]}</h4><p>{answers.length}人が選択</p></div></div><div className="result-choice-players">{answers.length > 0 ? answers.map(answer => { const player = state.players.find(item => item.id === answer.player_id); const isCurrentPlayer = answer.player_id === identity?.player_id; const isParent = answer.player_id === result.parent_id; return <article key={answer.player_id} aria-label={isCurrentPlayer ? `${answer.username}、自分` : undefined}><ReactionAvatarButton compact target={{ id: answer.player_id, username: answer.username }} surfaceId={result.question_id} disabled={isCurrentPlayer || !player?.connected} onSelect={reactions.openPicker}><img width="30" height="30" src={avatarUrl(answer.player_id)} alt="" />{isParent && <span className="result-parent-badge" aria-label="この問題の親">親</span>}{isCurrentPlayer && <span className="result-self-badge" aria-hidden="true">自分</span>}</ReactionAvatarButton><strong><PlayerName name={answer.username} /></strong></article>; }) : <p className="muted">選んだ人はいません</p>}</div></section>; })}</div>{result.answers.some(answer => answer.choice === null) && <div className="result-unanswered"><strong>時間切れ・未回答</strong><span>{result.answers.filter(answer => answer.choice === null).map(answer => answer.username).join("、")}</span></div>}</> : <p className="muted">結果を集計しています…</p>}
     </section>}
 

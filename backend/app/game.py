@@ -297,11 +297,15 @@ class Room:
     def timer_token(self) -> tuple:
         return (self.clock_version, self.status, self.intro_kind, self.clock_deadline())
 
+    @property
+    def turn_id(self) -> str:
+        return f"{self.game_run_id}:{self.current_question_index}"
+
     def snapshot(self, include_question: bool = True) -> dict:
         question = self.current_question
         current_parent_id = self.current_parent_id
         current_round = self.round_number_at()
-        payload = {"room_id": self.id, "title": self.title, "status": self.status, "owner_id": self.owner_id, "players": [{"id": p.id, "username": p.username, "score": p.score, "connected": p.connected, "ready": p.ready} for p in self.players.values()], "current_question_index": self.current_question_index, "question_count": self.total_turns, "round_count": self.round_count, "current_round": current_round, "current_parent_id": self.current_parent_id, "answered": len(self.answers), "settings": self.settings.model_dump(), "rules": self.rule_spec, "previous_game": self.previous_game, "clock": self.clock_metadata()}
+        payload = {"turn_id": self.turn_id, "room_id": self.id, "title": self.title, "status": self.status, "owner_id": self.owner_id, "players": [{"id": p.id, "username": p.username, "score": p.score, "connected": p.connected, "ready": p.ready} for p in self.players.values()], "current_question_index": self.current_question_index, "question_count": self.total_turns, "round_count": self.round_count, "current_round": current_round, "current_parent_id": self.current_parent_id, "answered": len(self.answers), "settings": self.settings.model_dump(), "rules": self.rule_spec, "previous_game": self.previous_game, "clock": self.clock_metadata()}
         if self.status == GameStatus.COUNTDOWN:
             payload.update({"phase_started_at": self.countdown_started_at.isoformat() if self.countdown_started_at else None, "phase_duration": self.settings.countdown_duration})
         if self.status == GameStatus.TURN_INTRO:
@@ -1023,19 +1027,19 @@ class GameManager:
             return room
 
     @retry_room_conflicts
-    async def select_answer(self, room_id: str, player_id: str, question_id: str, choice: str) -> Room:
+    async def select_answer(self, room_id: str, player_id: str, question_id: str, choice: str, *, turn_id: str | None = None) -> Room:
         room = self.room(room_id)
         async with self._room_command(room):
-            answer = self._validated_answer(room, player_id, question_id, choice)
+            answer = self._validated_answer(room, player_id, question_id, choice, turn_id=turn_id)
             room.draft_answers[player_id] = answer
             await self._persist_room_async(room)
             return room
 
     @retry_room_conflicts
-    async def answer(self, room_id: str, player_id: str, question_id: str, choice: str) -> Room:
+    async def answer(self, room_id: str, player_id: str, question_id: str, choice: str, *, turn_id: str | None = None) -> Room:
         room = self.room(room_id)
         async with self._room_command(room):
-            answer = self._validated_answer(room, player_id, question_id, choice)
+            answer = self._validated_answer(room, player_id, question_id, choice, turn_id=turn_id)
             room.draft_answers[player_id] = answer
             room.answers[player_id] = answer
             if room.status == GameStatus.PARENT_ANSWERING:
@@ -1046,7 +1050,9 @@ class GameManager:
             return room
 
     @staticmethod
-    def _validated_answer(room: Room, player_id: str, question_id: str, choice: str) -> Answer:
+    def _validated_answer(room: Room, player_id: str, question_id: str, choice: str, *, turn_id: str | None = None) -> Answer:
+        if turn_id is not None and turn_id != room.turn_id:
+            raise HTTPException(409, "INVALID_ANSWER")
         if room.status not in {GameStatus.PARENT_ANSWERING, GameStatus.QUESTION} or not room.current_question or room.current_question.id != question_id:
             raise HTTPException(409, "INVALID_ANSWER")
         if room.status == GameStatus.PARENT_ANSWERING and player_id != room.current_parent_id:
